@@ -35,12 +35,20 @@
 #define LDR_PIN         22u
 #define LDR_ADC_CH      3u       /* ADC0_SE3 */
 
+/* Soil Moisture sensor on PTE23 -> ADC0_SE4a (ALT0) */
+#define SM_PORT         PORTE
+#define SM_PIN          23u
+#define SM_ADC_CH       4u       /* ADC0_SE4a */
+
 /* ------------------------------ Thresholds ------------------------------ */
 #define LDR_DARK_ON     1500u    /* LED ON when avg < this (darker)  */
 #define LDR_LIGHT_OFF   1800u    /* LED OFF when avg > this (brighter) */
+#define SOIL_DRY_THRESH     2000u   /* Soil dry threshold */
+#define SOIL_WET_THRESH     1200u  /* Soil wet threshold */
 
 /* ------------------------------- Globals -------------------------------- */
 static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
+static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
 
 /* ------------------------------ GPIO/LED -------------------------------- */
 static inline void led_on(void)   { LED_GPIO->PCOR = (1u << LED_PIN); }  /* active-low */
@@ -72,6 +80,15 @@ static void adc0_pins_init(void)
     LDR_PORT->PCR[LDR_PIN] = (LDR_PORT->PCR[LDR_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
 }
 
+static void adc0_pins_init_soil(void) {
+    /* Enable PORTE clock */
+    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+
+    /* PTE23 to ALT0 (ADC) */
+    SM_PORT->PCR[SM_PIN] =
+        (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
+}
+
 static void adc0_init(void)
 {
     /* Gate clock to ADC0 */
@@ -96,6 +113,15 @@ static void adc0_init(void)
 static inline void adc0_start(uint8_t ch)
 {
     ADC0->SC1[0] = ADC_SC1_AIEN_MASK | ADC_SC1_DIFF(0) | ADC_SC1_ADCH(ch);
+}
+
+/* Polling conversion function (for soil moisture) */
+static uint16_t adc0_read_poll(uint8_t ch) {
+    ADC0->SC1[0] = ADC_SC1_DIFF(0) | ADC_SC1_ADCH(ch);
+    while (!(ADC0->SC1[0] & ADC_SC1_COCO_MASK)) {
+        /* Wait for conversion */
+    }
+    return ADC0->R[0];
 }
 
 /* -------------------------- ADC0 conversion ISR ------------------------- */
@@ -134,6 +160,7 @@ int main(void)
     bool ledOn = false;
 
     while (1) {
+        /* ---------------- Photoresistor ---------------- */
         uint16_t x = g_ldr_raw;
 
         if (!ledOn && (x > LDR_DARK_ON)) {
@@ -142,6 +169,19 @@ int main(void)
         } else if (ledOn && (x < LDR_LIGHT_OFF)) {
             led_off();
             ledOn = false;
+        }
+
+        /* ---------------- Soil Moisture ---------------- */
+        uint16_t soilVal = adc0_read_poll(SM_ADC_CH);
+        g_soil_raw = soilVal;
+
+        if (soilVal > SOIL_DRY_THRESH) {
+            PRINTF("Soil dry! ADC=%u -> Water needed.\r\n", soilVal);
+            /* TODO: Trigger servo/relay here later */
+        } else if (soilVal < SOIL_WET_THRESH) {
+            PRINTF("Soil wet enough. ADC=%u\r\n", soilVal);
+        } else {
+            PRINTF("Soil normal. ADC=%u\r\n", soilVal);
         }
 
         /* small idle delay */
