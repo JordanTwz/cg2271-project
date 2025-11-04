@@ -40,6 +40,11 @@
 #define SM_PIN          23u
 #define SM_ADC_CH       4u       /* ADC0_SE4a */
 
+/* Water Sensor uses PORT C*/
+#define WATERSENSORSIGNAL 0
+#define WATERSENSORVCC 4
+#define WATERSENSORGND 6
+
 /* ------------------------------ Thresholds ------------------------------ */
 #define LDR_DARK_ON     1500u    /* LED ON when avg < this (darker)  */
 #define LDR_LIGHT_OFF   1800u    /* LED OFF when avg > this (brighter) */
@@ -66,6 +71,31 @@ static void gpio_init_led(void)
     /* Set as output and ensure LED is OFF (active-low) */
     LED_GPIO->PDDR |= (1u << LED_PIN);
     led_off();
+}
+
+/* ------------------------------ GPIO/Water Sensor -------------------------------- */
+static void init_watersensor() {
+	//activate PORTC
+	SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK;
+
+	//select GPIO for all pins
+	PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_MUX_MASK;
+	PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_MUX(1);
+
+	PORTC->PCR[WATERSENSORVCC] &= ~PORT_PCR_MUX_MASK;
+	PORTC->PCR[WATERSENSORVCC] |= PORT_PCR_MUX(1);
+
+	PORTC->PCR[WATERSENSORGND] &= ~PORT_PCR_MUX_MASK;
+	PORTC->PCR[WATERSENSORGND] |= PORT_PCR_MUX(1);
+
+	//Signal to input, VCC and GND to output
+	GPIOC->PDDR &= ~(1 << WATERSENSORSIGNAL);
+	GPIOC->PDDR |= (1 << WATERSENSORVCC);
+	GPIOC->PDDR |= (1 << WATERSENSORGND);
+
+	//Set VCC HIGH and GND LOW
+	GPIOC->PSOR |= (1 << WATERSENSORVCC);
+	GPIOC->PCOR &= ~(1 << WATERSENSORGND);
 }
 
 /* ----------------------------- ADC0 setup ------------------------------- */
@@ -152,6 +182,7 @@ int main(void)
     gpio_init_led();
     adc0_pins_init();
     adc0_init();
+    init_watersensor();
 
     /* Kick the first conversion; ISR will keep them going */
     adc0_start(LDR_ADC_CH);
@@ -182,6 +213,13 @@ int main(void)
             PRINTF("Soil wet enough. ADC=%u\r\n", soilVal);
         } else {
             PRINTF("Soil normal. ADC=%u\r\n", soilVal);
+        }
+
+        /* ---------------- Water Sensor ---------------- */
+        if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
+        	PRINTF("water\n");
+        } else {
+        	PRINTF("no water\n");
         }
 
         /* small idle delay */
