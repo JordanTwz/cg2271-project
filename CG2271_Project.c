@@ -60,13 +60,13 @@ static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor
 /* ------------------------------ GPIO/LED -------------------------------- */
 /* active-low */
 static inline void led_on(void)   { 
-    LED_GPIO->PCOR |= (1u << LED_PIN);
+    // LED_GPIO->PCOR |= (1u << LED_PIN);
     GPIOE->PCOR |= (1 << REDLED);
 	GPIOD->PCOR |= (1 << GREENLED);
 }
 
 static inline void led_off(void)  { 
-    LED_GPIO->PSOR |= (1u << LED_PIN);
+    // LED_GPIO->PSOR |= (1u << LED_PIN);
     PIOE->PSOR |= (1 << REDLED);
 	GPIOD->PSOR |= (1 << GREENLED);
 }
@@ -87,7 +87,7 @@ static void gpio_init_led(void)
 	PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1);
 
     /* Set as output and ensure LED is OFF (active-low) */
-    LED_GPIO->PDDR |= (1u << LED_PIN);
+    // LED_GPIO->PDDR |= (1u << LED_PIN);
 	GPIOE->PDDR |= (1 << REDLED);
 	GPIOD->PDDR |= (1 << GREENLED);
     led_off();
@@ -212,6 +212,25 @@ void ADC0_IRQHandler(void)
     adc0_start(LDR_ADC_CH);
 }
 
+// RTOS task main entry point
+static void LED_task(void *p) {
+    while (1) {
+        uint16_t x = g_ldr_raw;
+
+        //ledOn variable to be received from esp32 to keep track of LED state
+        if (!ledOn && (x > LDR_DARK_ON)) {
+            led_on(); 
+            ledOn = true;
+        } else if (ledOn && (x < LDR_LIGHT_OFF)) {
+            led_off();
+            ledOn = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250)); //delay for 100ms        
+    }
+}
+
+
+
 /* -------------------------------- main ---------------------------------- */
 int main(void)
 {
@@ -235,6 +254,7 @@ int main(void)
     adc0_start(LDR_ADC_CH);
 
     /* Simple hysteresis to avoid flicker near threshold */
+    // receive "1" from esp32 to turn on led
     bool ledOn = false;
 
     while (1) {
