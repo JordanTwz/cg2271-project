@@ -295,6 +295,10 @@ void PORTC_PORTD_IRQHandler() {
     NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
     
     if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) { 
+        BaseType_t hpw = pdFALSE;
+        xSemaphoreGiveFromISR(servo_semaphore, &hpw);
+        portYIELD_FROM_ISR(hpw);
+
         // clear interrupt flag
         PORTC->ISFR |= (1<< WATERSENSORSIGNAL);
 
