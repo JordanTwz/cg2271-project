@@ -34,8 +34,8 @@
 #define LED_PORT        PORTC
 #define LED_GPIO        GPIOC
 #define LED_PIN         2u       /* PTC2, external LED (active-low) */
-#define REDLED		    31       /* PTE31 */
-#define GREENLED	    5        /* PTD5 */
+#define REDLED		    6u       /* PTD6 */
+#define GREENLED	    7u       /* PTD7 */
 
 /* Photoresistor on PTE22 -> ADC0_SE3 (ALT0) */
 #define LDR_PORT        PORTE
@@ -216,13 +216,13 @@ static void sendTask(void *p) {
 /* active-low */
 static inline void leds_on(void)   { 
     // LED_GPIO->PCOR |= (1u << LED_PIN);
-    GPIOE->PCOR |= (1 << REDLED);
+    GPIOD->PCOR |= (1 << REDLED);
 	GPIOD->PCOR |= (1 << GREENLED);
 }
 
 static inline void led_off(void)  { 
     // LED_GPIO->PSOR |= (1u << LED_PIN);
-    PIOE->PSOR |= (1 << REDLED);
+    GPIOD->PSOR |= (1 << REDLED);
 	GPIOD->PSOR |= (1 << GREENLED);
 }
 
@@ -236,14 +236,14 @@ static void gpio_init_led(void)
     LED_PORT->PCR[LED_PIN] |= PORT_PCR_MUX(1);     /* ALT1 = GPIO */
 
     /* Configure RED, GREEN LEDs */
-    PORTE->PCR[REDLED] &= ~PORT_PCR_MUX_MASK;
-	PORTE->PCR[REDLED] |= PORT_PCR_MUX(1);
+    PORTD->PCR[REDLED] &= ~PORT_PCR_MUX_MASK;
+	PORTD->PCR[REDLED] |= PORT_PCR_MUX(1);
     PORTD->PCR[GREENLED] &= PORT_PCR_MUX_MASK;
 	PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1);
 
     /* Set as output and ensure LED is OFF (active-low) */
     // LED_GPIO->PDDR |= (1u << LED_PIN);
-	GPIOE->PDDR |= (1 << REDLED);
+	GPIOD->PDDR |= (1 << REDLED);
 	GPIOD->PDDR |= (1 << GREENLED);
     led_off();
 }
@@ -296,7 +296,7 @@ void PORTC_PORTD_IRQHandler() {
 
         PRINTF("Water level LOW, no water detected!\r\n"); //interrup is triggered when there's no water detected by water sensor
         // Turn ON red LED as indication to top up water tank
-        GPIOE->PSOR |= (1 << REDLED);
+        GPIOD->PSOR |= (1 << REDLED);
     }
 }
 
