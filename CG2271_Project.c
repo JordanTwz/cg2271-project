@@ -324,14 +324,14 @@ static void adc0_pins_init(void)
     LDR_PORT->PCR[LDR_PIN] = (LDR_PORT->PCR[LDR_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
 }
 
-static void adc0_pins_init_soil(void) {
-    /* Enable PORTE clock */
-    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+// static void adc0_pins_init_soil(void) {
+//     /* Enable PORTE clock */
+//     SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
 
-    /* PTE23 to ALT0 (ADC) */
-    SM_PORT->PCR[SM_PIN] =
-        (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
-}
+//     /* PTE23 to ALT0 (ADC) */
+//     SM_PORT->PCR[SM_PIN] =
+//         (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
+// }
 
 static void adc0_init(void)
 {
@@ -458,7 +458,7 @@ void setTPMClock() {
 
 void PWM_Init_Servo(void) {
     // Configure PWM timer for 50Hz output to servo pin
-    SIM->SCGC5 |= SIM_SCGC_PORTE_MASK;
+    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
 
     PORTE->PCR[SERVO_PWM_PIN] &= ~PORT_PCR_MUX_MASK;
     PORTE->PCR[SERVO_PWM_PIN] |= PORT_PCR_MUX(0b11);  // ALT3 = TPM2_CH0
@@ -470,13 +470,13 @@ void PWM_Init_Servo(void) {
 
 
 // Update servo semaphore based on water sensor reading
-void Update_Servo_Semaphore(void) {
-    if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
-        servo_semaphore = 1;  // Water present → allow "watering" task
-    } else {
-        servo_semaphore = 0;  // No water → block "watering" task
-    }
-}
+// void Update_Servo_Semaphore(void) {
+//     if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
+//         servo_semaphore = 1;  // Water present → allow "watering" task
+//     } else {
+//         servo_semaphore = 0;  // No water → block "watering" task
+//     }
+// }
 
 /* -------------------------------- main ---------------------------------- */
 int main(void)
