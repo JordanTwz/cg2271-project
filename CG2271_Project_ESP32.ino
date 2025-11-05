@@ -3,8 +3,11 @@
 
 #include <Arduino.h>
 
-constexpr int PIN_LDR  = 1;  // ADC1 on ESP32-S2 (GPIO1)
-constexpr int PIN_TX   = 3;  // UART TX to MCXC444 (connect to PTD2/RX)
+constexpr int PIN_LDR  = 1;
+constexpr int UART_TX  = 3;   // TX to MCXC444 RX (PTD2)
+constexpr int UART_RX  = 18;  // RX from MCXC444 TX (PTD3)
+
+constexpr int DARK_ON   = 1000;
 
 int readADC() {
   long acc = 0;
@@ -13,37 +16,29 @@ int readADC() {
     acc += analogRead(PIN_LDR);
     delayMicroseconds(200);
   }
-  return acc / N;
+  return acc / 8;
 }
 
-int RAW_THRESHOLD = 300;
+bool ledOn = false;
 
 void setup() {
   Serial.begin(115200);
-  delay(200);
-
-  analogReadResolution(12);
-  analogSetPinAttenuation(PIN_LDR, ADC_11db);
-
-  Serial1.begin(9600, SERIAL_8N1, -1, PIN_TX);
-
-  Serial.println("\n[ESP32-S2 + KY-018] Starting...");
-  Serial.println("Columns: raw, msg");
+  Serial1.begin(9600, SERIAL_8N1, UART_RX, UART_TX);
 }
 
 void loop() {
-  int raw = readADC();
-  bool dark = (raw < RAW_THRESHOLD);
+  int v = readADC();
+  Serial.printf("ADC=%d\n", v);
 
-  if (dark) {
-    Serial1.write("1\n");
+  if (v > DARK_ON) {
+    Serial1.println("1");
+    Serial.println("TX: 1");
+    ledOn = true;
   } else {
-    Serial1.write("0\n");
+    Serial1.println("0");
+    Serial.println("TX: 0");
+    ledOn = false;
   }
 
-  Serial.print(raw);
-  Serial.print(", ");
-  Serial.println(dark ? 1 : 0);
-
-  delay(200);
+  delay(100);
 }
