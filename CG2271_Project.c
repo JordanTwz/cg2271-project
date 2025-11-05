@@ -299,14 +299,14 @@ void PORTC_PORTD_IRQHandler() {
     NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
     
     if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) { 
-        BaseType_t hpw = pdFALSE;
-        xSemaphoreGiveFromISR(servo_semaphore, &hpw);
-        portYIELD_FROM_ISR(hpw);
+        // BaseType_t hpw = pdFALSE;
+        // xSemaphoreGiveFromISR(servo_semaphore, &hpw);
+        // portYIELD_FROM_ISR(hpw);
 
         // clear interrupt flag
         PORTC->ISFR |= (1<< WATERSENSORSIGNAL);
 
-        PRINTF("Water level LOW, no water detected!\r\n"); //interrup is triggered when there's no water detected by water sensor
+        // PRINTF("Water level LOW, no water detected!\r\n"); //interrupt is triggered when there's no water detected by water sensor
         // Turn ON red LED as indication to top up water tank
         GPIOD->PSOR |= (1 << REDLED);
     }
