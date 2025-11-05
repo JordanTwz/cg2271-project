@@ -58,6 +58,16 @@
 #define TX_PIN 3
 #define RX_PIN 2
 
+/* Servo Motor  */
+#define SERVO_PORT        PORTE
+#define SERVO_GPIO_HIGH   20u /*PTE20*/
+#define SERVO_GPIO_LOW   21u /*PTE21*/
+#define SERVO_PWM_PIN   22u /*PTE22*/
+#define SERVO_PWM_PERIOD  20000u
+#define SERVO_CLOSED     1000u
+#define SERVO_OPENED      1250u
+#define WATERING_DURATION 3000000u
+
 /* ------------------------------ Thresholds ------------------------------ */
 #define LDR_DARK_ON     1500u    /* LED ON when avg < this (darker)  */
 #define LDR_LIGHT_OFF   1800u    /* LED OFF when avg > this (brighter) */
@@ -67,6 +77,7 @@
 /* ------------------------------- Globals -------------------------------- */
 static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
 static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
+static volatile uint8_t servo_semaphore = 1;  /* semaphore for "watering" task */
 
 /* ------------------------------ UART -------------------------------- */
 void initUART2(uint32_t baud_rate)
@@ -354,6 +365,77 @@ void ADC0_IRQHandler(void)
 
     /* Immediately start next sample (continuous software-trigger sampling) */
     adc0_start(LDR_ADC_CH);
+}
+
+/* ------------------------------ GPIO/Servo Motor -------------------------------- */
+void setMCGIRClk() {
+ // CHoose MCG clock source of 01 for LIRC
+ // and set IRCLKEN to 1 to enable LIRC
+ MCG ->C1 &= ~MCG_C1_CLKS_MASK;
+ MCG->C1 |= MCG_C2_IRCS_MASK;
+
+ // Set IRCS to 1 to choose 8 MHz clock
+ MCG->C2 |= MCG_C2_IRCS_MASK;
+
+ // Choose FCRDIV of 0 for divisor of 1
+ MCG->SC &= ~MCG_SC_FCRDIV_MASK;
+ MCG->SC |= MCG_SC_FCRDIV(0b0);
+
+ // Choose LIRC_DIV2 of 0 for divisor of 1
+ MCG->MC &= ~MCG_MC_LIRC_DIV2_MASK;
+ MCG->MC |= MCG_MC_LIRC_DIV2(0b0);
+}
+
+void setTPMClock() {
+ // Set MCGIRCLK
+ setMCGIRClk()
+
+ // Choose MCGIRCLK (8 MHz)
+ SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
+ SIM->SOPT2 |= ~SIM_SOPT2_TPMSRC(0b11);
+
+ // Turn on clock gating to TPM2 (PTE22)
+ SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;
+
+ //Set up TPM2
+ //Turn off TPM2 and clear the prescalar field
+ TPM2->SC &= ~(TPM_SC_CMOD_MASK | TPM_SC_PS_MASK);
+ TPM2->SC |= TPM_SC_PS(0b111); // Prescalar of 128
+ TPM2->SC |= TPM_SC_CPWMS_MASK; // Centre-aligned PWM mode
+
+ 
+ TPM2->CNT = 0; // Initialize count to 0
+ TPM2->MOD = 63; // Mod value for PWM frequency of 50Hz
+}
+
+void PWM_Init_Servo(void) {
+    // Configure PWM timer for 50Hz output to servo pin
+ SIM->SCGC5 = SIM_SCGC_PORTE_MASK;
+
+ PORTE->PCR[SERVO_PWM_PIN] &= ~PORT_PCR_MUX_MASK;
+    PORTE->PCR[SERVO_PWM_PIN] |= PORT_PCR_MUX(0b11);  // ALT3 = TPM2_CH0
+
+ // Set pins to output
+ GPIOE->PDDR |= (1 << SERVO_PWM_PIN);
+}
+
+void Set_Servo_Pulse(uint16_t pulse_us) {
+    // Update PWM duty cycle register to match pulse_us
+ 
+}
+
+void Servo_Task(void) {
+    Set_Servo_Pulse(SERVO_OPENED);
+    for (volatile uint32_t d = 0; d < WATERING_DURATION; ++d) { __NOP(); }  // ~3s delay
+    Set_Servo_Pulse(SERVO_CLOSED);
+}
+
+void Update_Servo_Semaphore(void) {
+    if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
+        servo_semaphore = 1;  servo_semaphore = 1;  // Water present → allow "watering" task
+    } else {
+        servo_semaphore = 0;  // No water → block "watering" task
+    }
 }
 
 /* -------------------------------- main ---------------------------------- */
