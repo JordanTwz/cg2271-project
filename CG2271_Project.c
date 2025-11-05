@@ -47,6 +47,11 @@
 #define WATERSENSORVCC 4
 #define WATERSENSORGND 6
 
+/*UART Pins*/
+#define UART_PORT PORTD
+#define TX_PIN 3
+#define RX_PIN 2
+
 /* ------------------------------ Thresholds ------------------------------ */
 #define LDR_DARK_ON     1500u    /* LED ON when avg < this (darker)  */
 #define LDR_LIGHT_OFF   1800u    /* LED OFF when avg > this (brighter) */
