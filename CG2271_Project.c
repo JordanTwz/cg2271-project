@@ -75,6 +75,11 @@
 #define SOIL_DRY_THRESH     2000u   /* Soil dry threshold */
 #define SOIL_WET_THRESH     1200u  /* Soil wet threshold */
 
+/* --------------------- Time-slicing & Preemption ------------------------- */
+#define configUSE_PREMPTION     1
+#define configUSE_TIME_SLICING  1
+#define configTICK_RATE_HZ      1000
+
 /* ------------------------------- Globals -------------------------------- */
 static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
 static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
@@ -389,6 +394,8 @@ static void LED_task(void *p) {
             GPIOD->PSOR |= (1 << GREENLED);
             ledOn = false;
         }
+
+        PRINTF("LED task running...\r\n");
         vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
     }
 }
@@ -400,6 +407,9 @@ static void Servo_task(void *p) {
     	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
 
     	Set_Servo_Pulse(SERVO_CLOSED);
+    	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
+        
+        PRINTF("Servo task running...\r\n");
         vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
     }
 }
@@ -507,7 +517,7 @@ int main(void)
     xTaskCreate(LED_task, "LED_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
 
     // turn on Servo task
-	xTaskCreate(Servo_task, "Servo_task", configMINIMAL_STACK_SIZE+100, NULL, 4, NULL);
+	xTaskCreate(Servo_task, "Servo_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
 	
     vTaskStartScheduler();
 
