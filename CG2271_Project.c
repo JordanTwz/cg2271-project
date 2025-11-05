@@ -28,6 +28,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
+#include "semphr.h"
 
 /* ---------------------------- Pin/Channel map ---------------------------- */
 /* External LED now on PTC2 (Arduino D7 on many FRDM boards) */
@@ -77,7 +78,10 @@
 /* ------------------------------- Globals -------------------------------- */
 static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
 static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
-static volatile uint8_t servo_semaphore = 1;  /* semaphore for "watering" task */
+// static volatile uint8_t servo_semaphore = 1;  /* semaphore for "watering" task */
+SemaphoreHandle_t servo_semaphore;
+servo_semaphore = xSemaphoreCreateBinary(); //starting value 0
+xSemaphoreGive(servo_semaphore); //set to 1
 
 /* ------------------------------ UART -------------------------------- */
 void initUART2(uint32_t baud_rate)
@@ -497,6 +501,8 @@ int main(void)
 
     // turn on LED task
     xTaskCreate(LED_task, "LED_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
+
+    // turn on Servo task
 	xTaskCreate(Servo_task, "Servo_task", configMINIMAL_STACK_SIZE+100, NULL, 4, NULL);
 	
     vTaskStartScheduler();
