@@ -385,6 +385,16 @@ static void LED_task(void *p) {
     }
 }
 
+static void Servo_task(void *p) {
+    while (1) {
+        Set_Servo_Pulse(SERVO_OPENED);
+    	for (volatile uint32_t d = 0; d < WATERING_DURATION; ++d) { __NOP(); }  // ~3s delay
+    	Set_Servo_Pulse(SERVO_CLOSED);
+
+        vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
+    }
+}
+
 /* ------------------------------ GPIO/Servo Motor -------------------------------- */
 void setMCGIRClk() {
     // CHoose MCG clock source of 01 for LIRC
@@ -442,13 +452,6 @@ void Set_Servo_Pulse(uint16_t pulse_us) {
 
 }
 
-// "Watering" task to control servo motor
-void Servo_Task(void) {
-    Set_Servo_Pulse(SERVO_OPENED);
-    for (volatile uint32_t d = 0; d < WATERING_DURATION; ++d) { __NOP(); }  // ~3s delay
-    Set_Servo_Pulse(SERVO_CLOSED);
-}
-
 // Update servo semaphore based on water sensor reading
 void Update_Servo_Semaphore(void) {
     if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
@@ -494,6 +497,9 @@ int main(void)
 
     // turn on LED task
     xTaskCreate(LED_task, "LED_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
+
+	xTaskCreate(Servo_task, "Servo_task", configMINIMAL_STACK_SIZE+100, NULL, 4, NULL);
+	
     vTaskStartScheduler();
 
     while (1) {
