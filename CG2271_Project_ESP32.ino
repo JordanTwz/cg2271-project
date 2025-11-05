@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 constexpr int PIN_LDR  = 1;  // ADC1 on ESP32-S2 (GPIO1)
-constexpr int PIN_TX   = 5;  // UART TX to MCXC444 (connect to PTD2/RX)
+constexpr int PIN_TX   = 3;  // UART TX to MCXC444 (connect to PTD2/RX)
 
 int readADC() {
   long acc = 0;
