@@ -15,6 +15,7 @@
  *   Low light -> LED ON; Bright -> LED OFF
  */
 
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "board.h"
@@ -58,6 +59,7 @@
 #define UART_PORT PORTD
 #define TX_PIN 3
 #define RX_PIN 2
+#define UART2_INT_PRIO  3 
 
 /* Servo Motor  */
 #define SERVO_PORT        PORTE
@@ -75,18 +77,16 @@
 #define SOIL_DRY_THRESH     2000u   /* Soil dry threshold */
 #define SOIL_WET_THRESH     1200u  /* Soil wet threshold */
 
-/* --------------------- Time-slicing & Preemption ------------------------- */
-#define configUSE_PREMPTION     1
-#define configUSE_TIME_SLICING  1
-#define configTICK_RATE_HZ      1000
+// /* --------------------- Time-slicing & Preemption ------------------------- */
+// #define configUSE_PREMPTION     1
+// #define configUSE_TIME_SLICING  1
+// #define configTICK_RATE_HZ      1000
 
 /* ------------------------------- Globals -------------------------------- */
 static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
 static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
 // static volatile uint8_t servo_semaphore = 1;  /* semaphore for "watering" task */
-SemaphoreHandle_t servo_semaphore;
-servo_semaphore = xSemaphoreCreateBinary(); //starting value 0
-xSemaphoreGive(servo_semaphore); //set to 1
+bool ledOn = false;
 
 /* ------------------------------ UART -------------------------------- */
 void initUART2(uint32_t baud_rate)
@@ -214,7 +214,7 @@ static void sendTask(void *p) {
 	int count=0;
 	char buffer[MAX_MSG_LEN];
 	while(1) {
-		sprintf(buffer, "This is message %d\n", count++);
+		PRINTF(buffer, "This is message %d\n", count++);
 		sendMessage(buffer);
 		vTaskDelay(pdMS_TO_TICKS(2000));
 	}
@@ -246,7 +246,7 @@ static void gpio_init_led(void)
     /* Configure RED, GREEN LEDs */
     PORTD->PCR[REDLED] &= ~PORT_PCR_MUX_MASK;
 	PORTD->PCR[REDLED] |= PORT_PCR_MUX(1);
-    PORTD->PCR[GREENLED] &= PORT_PCR_MUX_MASK;
+    PORTD->PCR[GREENLED] &= ~PORT_PCR_MUX_MASK;
 	PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1);
 
     /* Set as output and ensure LED is OFF (active-low) */
@@ -399,6 +399,8 @@ static void LED_task(void *p) {
     }
 }
 
+void Set_Servo_Pulse(uint16_t pulse_us);
+
 // Servo motor control task to water the plant
 static void Servo_task(void *p) {
     while (1) {
@@ -456,7 +458,7 @@ void setTPMClock() {
 
 void PWM_Init_Servo(void) {
     // Configure PWM timer for 50Hz output to servo pin
-    SIM->SCGC5 = SIM_SCGC_PORTE_MASK;
+    SIM->SCGC5 |= SIM_SCGC_PORTE_MASK;
 
     PORTE->PCR[SERVO_PWM_PIN] &= ~PORT_PCR_MUX_MASK;
     PORTE->PCR[SERVO_PWM_PIN] |= PORT_PCR_MUX(0b11);  // ALT3 = TPM2_CH0
@@ -465,10 +467,7 @@ void PWM_Init_Servo(void) {
     GPIOE->PDDR |= (1 << SERVO_PWM_PIN);
 }
 
-void Set_Servo_Pulse(uint16_t pulse_us) {
-    // Update PWM duty cycle register to match pulse_us
 
-}
 
 // Update servo semaphore based on water sensor reading
 void Update_Servo_Semaphore(void) {
@@ -504,10 +503,15 @@ int main(void)
 
     /* Simple hysteresis to avoid flicker near threshold */
     // receive "1" from esp32 to turn on led
-    bool ledOn = false;
+    // bool ledOn = false;
 
 	/*RTOS Setup*/
 	queue = xQueueCreate(QLEN, sizeof(TMessage));
+    
+    // create semaphore for servo task
+    SemaphoreHandle_t servo_semaphore = xSemaphoreCreateBinary();
+    configASSERT(servo_semaphore != NULL);
+    xSemaphoreGive(servo_semaphore); //set to 1
 
     xTaskCreate(recvTask, "recvTask", configMINIMAL_STACK_SIZE+100, NULL, 2, NULL);
     xTaskCreate(sendTask, "sendTask", configMINIMAL_STACK_SIZE+100, NULL, 1, NULL);
