@@ -120,9 +120,9 @@ static void init_watersensor() {
 	GPIOC->PSOR |= (1 << WATERSENSORVCC);
 	GPIOC->PCOR &= ~(1 << WATERSENSORGND);
 
-    // configure IRQ type to trigger on rising edge
+    // configure IRQ type to trigger on falling edge 
     PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_IRQC_MASK;
-    PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_IRQC(0b1001);  // rising edge
+    PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_IRQC(0b1010);  // falling edge
 
     PORTC->ISFR |= (1<< WATERSENSORSIGNAL); // clear any pending interrupt
 
@@ -136,9 +136,9 @@ void PORTC_PORTD_IRQHandler() {
     NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
     
     if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) {
-        PRINTF("Water sensor triggered interrupt!\r\n"); //interrup is triggered when there's no water detected by water sensor
-        // Toggle red LED as indication to top up water tank
-        GPIOE->PTOR |= (1 << REDLED);
+        PRINTF("Water level LOW, no water detected!\r\n"); //interrup is triggered when there's no water detected by water sensor
+        // Turn ON red LED as indication to top up water tank
+        GPIOE->PSOR |= (1 << REDLED);
     }
 
     // clear interrupt flag
