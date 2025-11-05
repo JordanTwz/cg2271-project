@@ -434,7 +434,7 @@ void setMCGIRClk() {
 
 void setTPMClock() {
     // Set MCGIRCLK
-    setMCGIRClk()
+    setMCGIRClk();
 
     // Choose MCGIRCLK (8 MHz)
     SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
