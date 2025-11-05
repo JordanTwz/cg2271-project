@@ -385,12 +385,13 @@ static void LED_task(void *p) {
     }
 }
 
+// Servo motor control task to water the plant
 static void Servo_task(void *p) {
     while (1) {
         Set_Servo_Pulse(SERVO_OPENED);
-    	for (volatile uint32_t d = 0; d < WATERING_DURATION; ++d) { __NOP(); }  // ~3s delay
-    	Set_Servo_Pulse(SERVO_CLOSED);
+    	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
 
+    	Set_Servo_Pulse(SERVO_CLOSED);
         vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
     }
 }
@@ -461,7 +462,6 @@ void Update_Servo_Semaphore(void) {
     }
 }
 
->>>>>>> d06f00e1c57aa6559810a9e8f842c5fdb94a180e
 /* -------------------------------- main ---------------------------------- */
 int main(void)
 {
@@ -497,7 +497,6 @@ int main(void)
 
     // turn on LED task
     xTaskCreate(LED_task, "LED_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
-
 	xTaskCreate(Servo_task, "Servo_task", configMINIMAL_STACK_SIZE+100, NULL, 4, NULL);
 	
     vTaskStartScheduler();
