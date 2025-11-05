@@ -135,14 +135,14 @@ static void init_watersensor() {
 void PORTC_PORTD_IRQHandler() {
     NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
     
-    if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) {
+    if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) { 
+        // clear interrupt flag
+        PORTC->ISFR |= (1<< WATERSENSORSIGNAL);
+
         PRINTF("Water level LOW, no water detected!\r\n"); //interrup is triggered when there's no water detected by water sensor
         // Turn ON red LED as indication to top up water tank
         GPIOE->PSOR |= (1 << REDLED);
     }
-
-    // clear interrupt flag
-    PORTC->ISFR |= (1<< WATERSENSORSIGNAL);
 }
 
 /* ----------------------------- ADC0 setup ------------------------------- */
