@@ -214,7 +214,7 @@ static void sendTask(void *p) {
 
 /* ------------------------------ GPIO/LED -------------------------------- */
 /* active-low */
-static inline void led_on(void)   { 
+static inline void leds_on(void)   { 
     // LED_GPIO->PCOR |= (1u << LED_PIN);
     GPIOE->PCOR |= (1 << REDLED);
 	GPIOD->PCOR |= (1 << GREENLED);
@@ -375,82 +375,84 @@ static void LED_task(void *p) {
 
         //ledOn variable to be received from esp32 to keep track of LED state
         if (!ledOn && (x > LDR_DARK_ON)) {
-            led_on(); 
+            GPIOD->PCOR |= (1 << GREENLED);
             ledOn = true;
         } else if (ledOn && (x < LDR_LIGHT_OFF)) {
-            led_off();
+            GPIOD->PSOR |= (1 << GREENLED);
             ledOn = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(250)); //delay for 100ms        
+        vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
     }
 }
 
 /* ------------------------------ GPIO/Servo Motor -------------------------------- */
 void setMCGIRClk() {
- // CHoose MCG clock source of 01 for LIRC
- // and set IRCLKEN to 1 to enable LIRC
- MCG ->C1 &= ~MCG_C1_CLKS_MASK;
- MCG->C1 |= MCG_C2_IRCS_MASK;
+    // CHoose MCG clock source of 01 for LIRC
+    // and set IRCLKEN to 1 to enable LIRC
+    MCG ->C1 &= ~MCG_C1_CLKS_MASK;
+    MCG->C1 |= MCG_C2_IRCS_MASK;
 
- // Set IRCS to 1 to choose 8 MHz clock
- MCG->C2 |= MCG_C2_IRCS_MASK;
+    // Set IRCS to 1 to choose 8 MHz clock
+    MCG->C2 |= MCG_C2_IRCS_MASK;
 
- // Choose FCRDIV of 0 for divisor of 1
- MCG->SC &= ~MCG_SC_FCRDIV_MASK;
- MCG->SC |= MCG_SC_FCRDIV(0b0);
+    // Choose FCRDIV of 0 for divisor of 1
+    MCG->SC &= ~MCG_SC_FCRDIV_MASK;
+    MCG->SC |= MCG_SC_FCRDIV(0b0);
 
- // Choose LIRC_DIV2 of 0 for divisor of 1
- MCG->MC &= ~MCG_MC_LIRC_DIV2_MASK;
- MCG->MC |= MCG_MC_LIRC_DIV2(0b0);
+    // Choose LIRC_DIV2 of 0 for divisor of 1
+    MCG->MC &= ~MCG_MC_LIRC_DIV2_MASK;
+    MCG->MC |= MCG_MC_LIRC_DIV2(0b0);
 }
 
 void setTPMClock() {
- // Set MCGIRCLK
- setMCGIRClk()
+    // Set MCGIRCLK
+    setMCGIRClk()
 
- // Choose MCGIRCLK (8 MHz)
- SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
- SIM->SOPT2 |= ~SIM_SOPT2_TPMSRC(0b11);
+    // Choose MCGIRCLK (8 MHz)
+    SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
+    SIM->SOPT2 |= ~SIM_SOPT2_TPMSRC(0b11);
 
- // Turn on clock gating to TPM2 (PTE22)
- SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;
+    // Turn on clock gating to TPM2 (PTE22)
+    SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;
 
- //Set up TPM2
- //Turn off TPM2 and clear the prescalar field
- TPM2->SC &= ~(TPM_SC_CMOD_MASK | TPM_SC_PS_MASK);
- TPM2->SC |= TPM_SC_PS(0b111); // Prescalar of 128
- TPM2->SC |= TPM_SC_CPWMS_MASK; // Centre-aligned PWM mode
+    //Set up TPM2
+    //Turn off TPM2 and clear the prescalar field
+    TPM2->SC &= ~(TPM_SC_CMOD_MASK | TPM_SC_PS_MASK);
+    TPM2->SC |= TPM_SC_PS(0b111); // Prescalar of 128
+    TPM2->SC |= TPM_SC_CPWMS_MASK; // Centre-aligned PWM mode
 
- 
- TPM2->CNT = 0; // Initialize count to 0
- TPM2->MOD = 63; // Mod value for PWM frequency of 50Hz
+    
+    TPM2->CNT = 0; // Initialize count to 0
+    TPM2->MOD = 63; // Mod value for PWM frequency of 50Hz
 }
 
 void PWM_Init_Servo(void) {
     // Configure PWM timer for 50Hz output to servo pin
- SIM->SCGC5 = SIM_SCGC_PORTE_MASK;
+    SIM->SCGC5 = SIM_SCGC_PORTE_MASK;
 
- PORTE->PCR[SERVO_PWM_PIN] &= ~PORT_PCR_MUX_MASK;
+    PORTE->PCR[SERVO_PWM_PIN] &= ~PORT_PCR_MUX_MASK;
     PORTE->PCR[SERVO_PWM_PIN] |= PORT_PCR_MUX(0b11);  // ALT3 = TPM2_CH0
 
- // Set pins to output
- GPIOE->PDDR |= (1 << SERVO_PWM_PIN);
+    // Set pins to output
+    GPIOE->PDDR |= (1 << SERVO_PWM_PIN);
 }
 
 void Set_Servo_Pulse(uint16_t pulse_us) {
     // Update PWM duty cycle register to match pulse_us
- 
+
 }
 
+// "Watering" task to control servo motor
 void Servo_Task(void) {
     Set_Servo_Pulse(SERVO_OPENED);
     for (volatile uint32_t d = 0; d < WATERING_DURATION; ++d) { __NOP(); }  // ~3s delay
     Set_Servo_Pulse(SERVO_CLOSED);
 }
 
+// Update servo semaphore based on water sensor reading
 void Update_Servo_Semaphore(void) {
     if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
-        servo_semaphore = 1;  servo_semaphore = 1;  // Water present → allow "watering" task
+        servo_semaphore = 1;  // Water present → allow "watering" task
     } else {
         servo_semaphore = 0;  // No water → block "watering" task
     }
@@ -489,19 +491,22 @@ int main(void)
 
     xTaskCreate(recvTask, "recvTask", configMINIMAL_STACK_SIZE+100, NULL, 2, NULL);
     xTaskCreate(sendTask, "sendTask", configMINIMAL_STACK_SIZE+100, NULL, 1, NULL);
+
+    // turn on LED task
+    xTaskCreate(LED_task, "LED_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
     vTaskStartScheduler();
 
     while (1) {
         /* ---------------- Photoresistor ---------------- */
-        uint16_t x = g_ldr_raw;
+        // uint16_t x = g_ldr_raw;
 
-        if (!ledOn && (x > LDR_DARK_ON)) {
-            led_on();
-            ledOn = true;
-        } else if (ledOn && (x < LDR_LIGHT_OFF)) {
-            led_off();
-            ledOn = false;
-        }
+        // if (!ledOn && (x > LDR_DARK_ON)) {
+        //     led_on();
+        //     ledOn = true;
+        // } else if (ledOn && (x < LDR_LIGHT_OFF)) {
+        //     led_off();
+        //     ledOn = false;
+        // }
 
         /* ---------------- Soil Moisture ---------------- */
         uint16_t soilVal = adc0_read_poll(SM_ADC_CH);
