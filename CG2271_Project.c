@@ -29,6 +29,8 @@
 #define LED_PORT        PORTC
 #define LED_GPIO        GPIOC
 #define LED_PIN         2u       /* PTC2, external LED (active-low) */
+#define REDLED		    31       /* PTE31 */
+#define GREENLED	    5        /* PTD5 */
 
 /* Photoresistor on PTE22 -> ADC0_SE3 (ALT0) */
 #define LDR_PORT        PORTE
@@ -56,20 +58,38 @@ static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
 static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
 
 /* ------------------------------ GPIO/LED -------------------------------- */
-static inline void led_on(void)   { LED_GPIO->PCOR = (1u << LED_PIN); }  /* active-low */
-static inline void led_off(void)  { LED_GPIO->PSOR = (1u << LED_PIN); }
+/* active-low */
+static inline void led_on(void)   { 
+    LED_GPIO->PCOR |= (1u << LED_PIN);
+    GPIOE->PCOR |= (1 << REDLED);
+	GPIOD->PCOR |= (1 << GREENLED);
+}
+
+static inline void led_off(void)  { 
+    LED_GPIO->PSOR |= (1u << LED_PIN);
+    PIOE->PSOR |= (1 << REDLED);
+	GPIOD->PSOR |= (1 << GREENLED);
+}
 
 static void gpio_init_led(void)
 {
-    /* Gate clocks for LED port (PORTC) and the ADC pin port (PORTE) */
-    SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK | SIM_SCGC5_PORTE_MASK;
+    /* Gate clocks for LED port (PORTC), GREENLED port (PORTD) and the ADC pin port (PORTE) */
+    SIM->SCGC5 |= (SIM_SCGC5_PORTC_MASK | SIM_SCGC5_PORTD_MASK | SIM_SCGC5_PORTE_MASK);
 
     /* PTC2 as GPIO (ALT1) */
     LED_PORT->PCR[LED_PIN] &= ~PORT_PCR_MUX_MASK;
     LED_PORT->PCR[LED_PIN] |= PORT_PCR_MUX(1);     /* ALT1 = GPIO */
 
+    /* Configure RED, GREEN LEDs */
+    PORTE->PCR[REDLED] &= ~PORT_PCR_MUX_MASK;
+	PORTE->PCR[REDLED] |= PORT_PCR_MUX(1);
+    PORTD->PCR[GREENLED] &= PORT_PCR_MUX_MASK;
+	PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1);
+
     /* Set as output and ensure LED is OFF (active-low) */
     LED_GPIO->PDDR |= (1u << LED_PIN);
+	GPIOE->PDDR |= (1 << REDLED);
+	GPIOD->PDDR |= (1 << GREENLED);
     led_off();
 }
 
@@ -100,9 +120,9 @@ static void init_watersensor() {
 	GPIOC->PSOR |= (1 << WATERSENSORVCC);
 	GPIOC->PCOR &= ~(1 << WATERSENSORGND);
 
-    // configure IRQ type to trigger on falling edge
+    // configure IRQ type to trigger on rising edge
     PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_IRQC_MASK;
-    PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_IRQC(0b1010);  // falling edge
+    PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_IRQC(0b1001);  // rising edge
 
     PORTC->ISFR |= (1<< WATERSENSORSIGNAL); // clear any pending interrupt
 
@@ -116,7 +136,7 @@ void PORTC_PORTD_IRQHandler() {
     NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
     
     if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) {
-        PRINTF("Water sensor triggered interrupt!\r\n"); //need check cos it's when there's no water detected by water sensor
+        PRINTF("Water sensor triggered interrupt!\r\n"); //interrup is triggered when there's no water detected by water sensor
         // Toggle red LED as indication to top up water tank
         GPIOE->PTOR |= (1 << REDLED);
     }
