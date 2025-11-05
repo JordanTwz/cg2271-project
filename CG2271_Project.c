@@ -93,7 +93,7 @@ void initUART2(uint32_t baud_rate)
 {
 	NVIC_DisableIRQ(UART2_FLEXIO_IRQn);
 
-	//enable clock to UART2 and PORTE
+	//enable clock to UART2 and PORTD
 	SIM->SCGC4 |= SIM_SCGC4_UART2_MASK;
 	SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK;
 
@@ -138,7 +138,6 @@ void initUART2(uint32_t baud_rate)
 	NVIC_SetPriority(UART2_FLEXIO_IRQn, UART2_INT_PRIO);
 	NVIC_ClearPendingIRQ(UART2_FLEXIO_IRQn);
 	NVIC_EnableIRQ(UART2_FLEXIO_IRQn);
-
 }
 
 #define MAX_MSG_LEN		256
@@ -408,7 +407,7 @@ static void Servo_task(void *p) {
 
     	Set_Servo_Pulse(SERVO_CLOSED);
     	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
-        
+
         PRINTF("Servo task running...\r\n");
         vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
     }
