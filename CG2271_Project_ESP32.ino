@@ -4,9 +4,8 @@
 #include <Arduino.h>
 
 constexpr int PIN_LDR  = 1;  // ADC1 on ESP32-S2 (GPIO1)
-constexpr int PIN_SYNC = 5;  // Digital output to MCXC444 PTC3
+constexpr int PIN_TX   = 3;  // UART TX to MCXC444 (connect to PTD2/RX)
 
-// Simple averaging to reduce noise
 int readADC() {
   long acc = 0;
   const int N = 8;
@@ -14,38 +13,37 @@ int readADC() {
     acc += analogRead(PIN_LDR);
     delayMicroseconds(200);
   }
-  return acc / N; // 0..4095 at 12-bit
+  return acc / N;
 }
 
-// TUNE THIS if needed (see serial output)
-int RAW_THRESHOLD = 300;  // lower reading = darker (typical KY-018 divider)
+int RAW_THRESHOLD = 300;
 
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  pinMode(PIN_SYNC, OUTPUT);
-  digitalWrite(PIN_SYNC, LOW); // start low
+  analogReadResolution(12);
+  analogSetPinAttenuation(PIN_LDR, ADC_11db);
 
-  // ESP32-S2 ADC config
-  analogReadResolution(12);                    // 0..4095
-  analogSetPinAttenuation(PIN_LDR, ADC_11db);  // ~0..3.3V range
+  Serial1.begin(9600, SERIAL_8N1, -1, PIN_TX);
 
   Serial.println("\n[ESP32-S2 + KY-018] Starting...");
-  Serial.println("Expect changing ADC values when you cover/uncover the LDR.");
-  Serial.println("Columns: raw, sync(0/1)");
+  Serial.println("Columns: raw, msg");
 }
 
 void loop() {
   int raw = readADC();
+  bool dark = (raw < RAW_THRESHOLD);
 
-  // Darker -> smaller raw; keep original logic shape (minimal change)
-  bool syncHigh = (raw > RAW_THRESHOLD);
-  digitalWrite(PIN_SYNC, syncHigh ? HIGH : LOW);
+  if (dark) {
+    Serial1.write("1\n");
+  } else {
+    Serial1.write("0\n");
+  }
 
   Serial.print(raw);
   Serial.print(", ");
-  Serial.println(syncHigh ? 1 : 0);
+  Serial.println(dark ? 1 : 0);
 
   delay(200);
 }
