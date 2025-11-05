@@ -1,44 +1,48 @@
-// ESP32-S2-MINI-1U + KY-018 (LDR) + SYNC to MCXC444
-// Board: ESP32S2 Dev Module (Arduino core for ESP32)
+// ESP32-S2-MINI-1U — KY-018 LDR -> MCXC444 via UART
+// Sends "1" if ADC > THRESHOLD, else "0"
 
 #include <Arduino.h>
 
-constexpr int PIN_LDR  = 1;
-constexpr int UART_TX  = 3;   // TX to MCXC444 RX (PTD2)
-constexpr int UART_RX  = 18;  // RX from MCXC444 TX (PTD3)
+constexpr int PIN_LDR = 1;      // ADC1_CH0 on ESP32-S2
+constexpr int UART_TX = 3;      // to MCXC444 RX (PTD2)
+constexpr int UART_RX = 18;     // from MCXC444 TX (PTD3)
 
-constexpr int DARK_ON   = 1000;
+constexpr int THRESHOLD = 500; // <-- TUNE THIS (0..4095 with 12-bit ADC)
+
+static int ema = 0;             // simple smoothing
 
 int readADC() {
-  long acc = 0;
-  const int N = 8;
-  for (int i = 0; i < N; ++i) {
-    acc += analogRead(PIN_LDR);
-    delayMicroseconds(200);
-  }
-  return acc / 8;
+  return analogRead(PIN_LDR);   // single read (fast)
 }
 
-bool ledOn = false;
-
 void setup() {
-  Serial.begin(115200);
-  Serial1.begin(9600, SERIAL_8N1, UART_RX, UART_TX);
+  Serial.begin(115200);               // USB debug
+  delay(200);
+
+  analogReadResolution(12);           // 0..4095
+  analogSetPinAttenuation(PIN_LDR, ADC_11db); // ~0–3.3V range
+
+  Serial1.begin(115200, SERIAL_8N1, UART_RX, UART_TX); // UART to MCXC444
+
+  // Seed EMA with first reading
+  ema = analogRead(PIN_LDR);
 }
 
 void loop() {
+  // Mirror anything from MCXC444 to USB (optional)
+  while (Serial1.available()) Serial.write(Serial1.read());
+
+  // Read & smooth (EMA alpha = 1/8)
   int v = readADC();
-  Serial.printf("ADC=%d\n", v);
+  ema += (v - ema) / 8;
 
-  if (v > DARK_ON) {
-    Serial1.println("1");
-    Serial.println("TX: 1");
-    ledOn = true;
-  } else {
-    Serial1.println("0");
-    Serial.println("TX: 0");
-    ledOn = false;
-  }
+  // Compare to threshold and transmit
+  char bit = (ema < THRESHOLD) ? '1' : '0';
+  Serial1.write(bit);
+  Serial1.write('\n');
 
-  delay(100);
+  // Debug to USB
+  Serial.printf("ADC=%d  EMA=%d  THRESHOLD=%d  TX:%c\n", v, ema, THRESHOLD, bit);
+
+  delay(100); // 10 Hz updates
 }
