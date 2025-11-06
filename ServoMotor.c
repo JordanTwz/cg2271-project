@@ -85,7 +85,7 @@ void start_ServoMotor(void) {
 }
 
 // Servo motor control task to water the plant
-int void main(void) {
+int main() {
 
     start_ServoMotor();
     
@@ -111,3 +111,4 @@ int void main(void) {
 //     }
 
 // }
+
