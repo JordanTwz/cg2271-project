@@ -40,16 +40,19 @@
 #define GREENLED_PIN      7u       /* PTD7 */
 
 /* ---------------- Soil Moisture config ---------------- */
-/* Soil Moisture sensor on PTE23 -> ADC0_SE4a (ALT0) */
-#define SM_PORT         PORTC
-#define SM_PIN          0u
-#define SM_ADC_CH       4u    
-#define SOIL_DRY_THRESH 2300u
-//#define SOIL_WET_THRESH 1200u
+/* Soil Moisture sensor on PTC0 -> (SDK notes say ADC0_SE8 on some parts) */
+#define SM_PORT           PORTC
+#define SM_PIN            0u
+#define SM_ADC_CH         4u              /* keep as-is per your code path */
+#define SOIL_DRY_THRESH   2300u
+/* #define SOIL_WET_THRESH 1200u */
 
-/* ---------------- water sensor config ---------------- */
-#define WATERSENSORSIGNAL 4
-static SemaphoreHandle_t g_waterSem = NULL;
+/* ---------------- Water sensor (digital D0) -- */
+/* Wiring: module VCC->3V3, GND->GND, D0 -> PTC1 */
+#define WS_PORT           PORTC
+#define WS_GPIO           GPIOC
+#define WS_PIN            1u             /* PTC1 as GPIO input with pull-up */
+#define WS_ACTIVE_HIGH    1              /* set to 0 if module pulls LOW when wet */
 
 /* ---------------- Messaging ------------------ */
 #define MAX_MSG_LEN       256
@@ -82,66 +85,6 @@ static void gpio_init_leds(void)
     /* Ensure both LEDs are OFF (active-low => drive HIGH) */
     led_off_red();
     led_off_green();
-}
-
-static void init_watersensor() {
-    NVIC_DisableIRQ(PORTC_PORTD_IRQn);
-
-	//activate PORTC
-	SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK;
-
-	//configure as GPIO for all pins
-	PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_MUX_MASK;
-	PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_MUX(1);
-
-	//configure signal to input, VCC and GND to output
-	GPIOC->PDDR &= ~(1 << WATERSENSORSIGNAL);
-
-    // configure IRQ type to trigger on falling edge
-    PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_IRQC_MASK;
-    PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_IRQC(0b1010);  // falling edge
-
-    PORTC->ISFR |= (1<< WATERSENSORSIGNAL); // clear any pending interrupt
-
-    NVIC_SetPriority(PORTC_PORTD_IRQn, 64);
-    NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
-    NVIC_EnableIRQ(PORTC_PORTD_IRQn);
-}
-
-// Interrupt handler for PORTC
-void PORTC_PORTD_IRQHandler(void) {
-    if (PORTC->ISFR & (1u << WATERSENSORSIGNAL)) {
-        /* Clear flag first */
-        PORTC->ISFR = (1u << WATERSENSORSIGNAL);
-
-        /* Wake the water task */
-        BaseType_t hpw = pdFALSE;
-        if (g_waterSem) {
-            xSemaphoreGiveFromISR(g_waterSem, &hpw);
-        }
-        portYIELD_FROM_ISR(hpw);
-    }
-}
-
-static void WaterTask(void *arg) {
-    (void)arg;
-    for (;;) {
-        /* Block until the ISR signals us */
-        if (xSemaphoreTake(g_waterSem, portMAX_DELAY) == pdTRUE) {
-            /* Read current pin level to decide state */
-            bool level_high = (GPIOC->PDIR & (1u << WATERSENSORSIGNAL)) != 0;
-
-            /* Your comment says falling-edge = "no water detected".
-               So assume LOW = no water → turn RED ON; HIGH = ok → RED OFF */
-            if (!level_high) {
-                led_on_red();
-                PRINTF("Water level LOW → refill needed.\r\n");
-            } else {
-                led_off_red();
-                PRINTF("Water level OK.\r\n");
-            }
-        }
-    }
 }
 
 /* ============== UART low-level =============== */
@@ -280,35 +223,36 @@ static void TxTask(void *arg)
     }
 }
 
-/*Soil Moisture Functions*/
+/* -------- Soil Moisture (analog) -------- */
 static uint16_t adc0_read_poll(uint8_t ch)
 {
-    ADC0->SC1[0] = ADC_SC1_ADCH(SM_ADC_CH); 
-    while (!(ADC0->SC1[0] & ADC_SC1_COCO_MASK)); 
+    (void)ch;
+    ADC0->SC1[0] = ADC_SC1_ADCH(SM_ADC_CH);
+    while (!(ADC0->SC1[0] & ADC_SC1_COCO_MASK));
     return ADC0->R[0];
 }
 
 void SoilMoisture_Init(void)
 {
-    SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK; 
-    SIM->SCGC6 |= SIM_SCGC6_ADC0_MASK;  
+    SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK;
+    SIM->SCGC6 |= SIM_SCGC6_ADC0_MASK;
 
     SM_PORT->PCR[SM_PIN] =
-        (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
+        (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0); /* analog */
 
-    ADC0->SC1[0] = ADC_SC1_ADCH(31);
+    ADC0->SC1[0] = ADC_SC1_ADCH(31);  /* disable ADC (ADCH=31) */
 
     ADC0->CFG1 =
-        ADC_CFG1_MODE(1)       
-        | ADC_CFG1_ADIV(0)      
-        | ADC_CFG1_ADICLK(0);  
+        ADC_CFG1_MODE(1)       /* 10-bit mode */
+        | ADC_CFG1_ADIV(0)     /* divide by 1 */
+        | ADC_CFG1_ADICLK(0);  /* input clock = bus */
 
     ADC0->SC2 =
-        ADC_SC2_REFSEL(1);
+        ADC_SC2_REFSEL(1);     /* alternate ref (per your SDK/board) */
 
     ADC0->SC3 = 0;
 
-    PRINTF("Soil Moisture ADC initialized (PTC0 -> ADC0_SE8, polling mode)\r\n");
+    PRINTF("Soil Moisture ADC initialized (PTC0 -> ADC channel configured), polling mode\r\n");
 }
 
 void SoilMoisture_Measure(void)
@@ -322,13 +266,64 @@ void SoilMoisture_Measure(void)
     }
 }
 
-static void SoilTask(void *arg) {
-	(void)arg;
-	const TickType_t T = pdMS_TO_TICKS(1000);
-	while(1) {
-		SoilMoisture_Measure();
-		vTaskDelay(T);
-	}
+static void SoilTask(void *arg)
+{
+    (void)arg;
+    const TickType_t T = pdMS_TO_TICKS(1000);
+    while (1) {
+        SoilMoisture_Measure();
+        vTaskDelay(T);
+    }
+}
+
+/* -------- Water Sensor (digital D0) -------- */
+static inline void WaterSensor_Init(void)
+{
+    /* Clock to PORTC already enabled by SoilMoisture_Init; ensure on */
+    SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK;
+
+    /* PTC1 as GPIO input with pull-up */
+    WS_PORT->PCR[WS_PIN] =
+        (WS_PORT->PCR[WS_PIN] & ~PORT_PCR_MUX_MASK)
+        | PORT_PCR_MUX(1)
+        | PORT_PCR_PE_MASK
+        | PORT_PCR_PS_MASK;
+
+    WS_GPIO->PDDR &= ~(1u << WS_PIN);
+}
+
+static inline bool WaterSensor_Wet(void)
+{
+    uint32_t raw = (WS_GPIO->PDIR >> WS_PIN) & 1u;
+#if WS_ACTIVE_HIGH
+    return raw ? true : false;   /* D0=1 => wet */
+#else
+    return raw ? false : true;   /* D0=0 => wet */
+#endif
+}
+
+static void WaterTask(void *arg)
+{
+    (void)arg;
+    const TickType_t T = pdMS_TO_TICKS(200);
+    bool last = false;
+
+    for (;;) {
+        bool wet = WaterSensor_Wet();
+
+        if (wet)  led_on_red();
+        else      led_off_red();
+
+        if (wet != last) {
+            PRINTF("Water sensor: %s\r\n", wet ? "WET" : "DRY");
+            /* Optionally broadcast over UART as well:
+             * UART2_SendLine(wet ? "WATER=1\n" : "WATER=0\n");
+             */
+            last = wet;
+        }
+
+        vTaskDelay(T);
+    }
 }
 
 /* ================== Main ===================== */
@@ -341,10 +336,9 @@ int main(void)
     BOARD_InitDebugConsole();
 #endif
 
-	g_waterSem = xSemaphoreCreateBinary();
     gpio_init_leds();
     SoilMoisture_Init();
-	init_watersensor();
+    WaterSensor_Init();
 
     /* Create queue BEFORE enabling RX interrupt */
     g_rxQueue = xQueueCreate(8, sizeof(TMessage));
@@ -353,10 +347,10 @@ int main(void)
     UART2_Init_115200();
     UART2->C2 |= UART_C2_RIE_MASK; /* enable RX interrupt */
 
-    xTaskCreate(RxTask, "RxTask", configMINIMAL_STACK_SIZE + 256, NULL, 2, NULL);
-    xTaskCreate(TxTask, "TxTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
-    xTaskCreate(SoilTask, "SoilTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
-	xTaskCreate(WaterTask, "WaterTask", configMINIMAL_STACK_SIZE + 256, NULL, 3, NULL);
+    xTaskCreate(RxTask,    "RxTask",    configMINIMAL_STACK_SIZE + 256, NULL, 2, NULL);
+    xTaskCreate(TxTask,    "TxTask",    configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
+    xTaskCreate(SoilTask,  "SoilTask",  configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
+    xTaskCreate(WaterTask, "WaterTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
 
     vTaskStartScheduler();
 
