@@ -36,8 +36,8 @@
 #define UART_INT_PRIO     3
 
 /* ---------------- LED pins (active-low) ------ */
-#define REDLED_PIN        6u       /* PTD6 */
-#define GREENLED_PIN      7u       /* PTD7 */
+#define REDLED_PIN        7u       /* PTD6 */
+#define GREENLED_PIN      6u       /* PTD7 */
 
 /* ---------------- Soil Moisture config ---------------- */
 /* Soil Moisture sensor on PTC0 -> (SDK notes say ADC0_SE8 on some parts) */
