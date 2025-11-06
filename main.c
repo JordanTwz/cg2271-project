@@ -31,6 +31,24 @@
 #include "queue.h"
 #include "semphr.h"
 
+static void LED_task(void *p) {
+    while (1) {
+        uint16_t x = g_ldr_raw;
+
+        //ledOn variable to be received from esp32 to keep track of LED state
+        if (!ledOn && (x > LDR_DARK_ON)) {
+            GPIOD->PCOR |= (1 << GREENLED);
+            ledOn = true;
+        } else if (ledOn && (x < LDR_LIGHT_OFF)) {
+            GPIOD->PSOR |= (1 << GREENLED);
+            ledOn = false;
+        }
+
+        PRINTF("LED task running...\r\n");
+        vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
+    }
+}
+
 /* --- Declarations for implemented functions --- */
 void gpio_init_led(void);
 
@@ -39,6 +57,14 @@ void SoilMoisture_Measure(void);
 
 void init_watersensor(void);
 void PORTC_PORTD_IRQHandler(void);
+
+void servo_task(void *p);
+
+void initUART2(uint32_t baud_rate);
+void sendMessage(const char *msg);
+void UART2_FLEXIO_IRQHandler(void);
+void recvTask(void *p);
+void sendTask(void *p);
 
 /* -------------------------------- main ---------------------------------- */
 int main(void)
@@ -55,6 +81,26 @@ int main(void)
     PRINTF("Soil Moisture Sensor\r\n");
     SoilMoisture_Init();
     init_watersensor();
+    initUART2(9600);
+
+    /*RTOS Setup*/
+	queue = xQueueCreate(QLEN, sizeof(TMessage));
+    
+    // create semaphore for servo task
+    servo_semaphore = xSemaphoreCreateBinary();
+    configASSERT(servo_semaphore != NULL);
+    xSemaphoreGive(servo_semaphore); //set to 1
+
+    xTaskCreate(recvTask, "recvTask", configMINIMAL_STACK_SIZE+100, NULL, 2, NULL);
+    xTaskCreate(sendTask, "sendTask", configMINIMAL_STACK_SIZE+100, NULL, 1, NULL);
+
+    // turn on LED task
+    xTaskCreate(LED_task, "LED_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
+
+    // turn on Servo task
+	xTaskCreate(Servo_task, "Servo_task", configMINIMAL_STACK_SIZE+100, NULL, 3, NULL);
+	
+    vTaskStartScheduler();
 
     while (1) {
         SoilMoisture_Measure();
