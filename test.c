@@ -43,7 +43,7 @@
 /* Soil Moisture sensor on PTE23 -> ADC0_SE4a (ALT0) */
 #define SM_PORT         PORTC
 #define SM_PIN          0u
-#define SM_ADC_CH       8u    
+#define SM_ADC_CH       4u    
 #define SOIL_DRY_THRESH 2300u
 //#define SOIL_WET_THRESH 1200u
 
