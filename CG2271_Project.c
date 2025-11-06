@@ -36,7 +36,7 @@
 #define UART_INT_PRIO     3
 
 /* ---------------- LED pins (active-low) ------ */
-#define REDLED_PIN        7u       /* PTD6 */
+#define REDLED_PIN        7u       /* PTD6 (keep as-is per your original mapping) */
 #define GREENLED_PIN      6u       /* PTD7 */
 
 /* ---------------- Soil Moisture config ---------------- */
@@ -76,7 +76,11 @@ static char g_txBuffer[MAX_MSG_LEN];
 /* -------- Gate: allow servo moves only when water is WET -------- */
 static SemaphoreHandle_t g_waterGate = NULL;  /* mutex unlocked => allowed; locked => blocked */
 
-/* initialize TPM2 for 50Hz PWM on PTE22  */
+/* ---- Water sensor ISR glue (NEW) ---- */
+static volatile bool g_wsWet = false;          /* latest state set by ISR */
+static SemaphoreHandle_t g_wsSem = NULL;       /* ISR -> WaterTask notify */
+
+/* ================= Servo (TPM2) ====================== */
 static void Servo_InitPWM(void)
 {
     SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
@@ -108,7 +112,7 @@ static void Servo_SetPulse(uint16_t pulse_us)
     TPM2->CONTROLS[0].CnV = (uint16_t)ticks;
 }
 
-/* ================= GPIO ====================== */
+/* ================= GPIO (LEDs) ====================== */
 static inline void led_on_green(void)  { GPIOD->PCOR = (1u << GREENLED_PIN); } /* LOW = ON  */
 static inline void led_off_green(void) { GPIOD->PSOR = (1u << GREENLED_PIN); } /* HIGH = OFF */
 
@@ -181,7 +185,7 @@ static inline void UART2_SendLine(const char *line)
     UART2->C2 |= (UART_C2_TE_MASK | UART_C2_TIE_MASK);   /* enable TX + interrupt */
 }
 
-/* ================== ISR ====================== */
+/* ================== UART ISR ====================== */
 void UART_IRQHandler(void)
 {
     static char rx_buf[MAX_MSG_LEN];
@@ -235,7 +239,7 @@ void UART_IRQHandler(void)
     }
 }
 
-/* ================ Tasks ====================== */
+/* ================ RX/TX Tasks ====================== */
 static void RxTask(void *arg)
 {
     (void)arg;
@@ -248,13 +252,11 @@ static void RxTask(void *arg)
             } else {
                 led_off_green();
             }
-            /* Debug print to semihost/Dbg console */
             PRINTF("[MCXC444] RX: '%s'\r\n", m.message);
         }
     }
 }
 
-/* Optional TX heartbeat task (keep or remove) */
 static void TxTask(void *arg)
 {
     (void)arg;
@@ -300,21 +302,10 @@ void SoilMoisture_Init(void)
     PRINTF("Soil Moisture ADC initialized (PTC0 -> ADC channel configured), polling mode\r\n");
 }
 
-void SoilMoisture_Measure(void)
-{
-    uint16_t soilVal = adc0_read_poll(SM_ADC_CH);
-
-    if (soilVal > SOIL_DRY_THRESH) {
-        PRINTF("Soil dry! ADC=%u. Water needed.\r\n", soilVal);
-    } else {
-        PRINTF("Soil wet enough. ADC=%u\r\n", soilVal);
-    }
-}
-
 static void SoilTask(void *arg)
 {
     (void)arg;
-    const TickType_t T = pdMS_TO_TICKS(1000); /* (keep original spacing; this line was untouched) */
+    const TickType_t T = pdMS_TO_TICKS(1000);
     bool currentlyOpen = false;
 
     for (;;) {
@@ -323,7 +314,6 @@ static void SoilTask(void *arg)
         if (soilVal > SOIL_DRY_THRESH) {
             PRINTF("Soil dry! ADC=%u --> Water needed\r\n", soilVal);
 
-            /* open the servo once if not already open */
             if (!currentlyOpen) {
                 if (xSemaphoreTake(g_waterGate, 0) == pdTRUE) {
                     Servo_SetPulse(SERVO_OPEN_US);
@@ -333,11 +323,9 @@ static void SoilTask(void *arg)
                     PRINTF("Water DRY: servo OPEN blocked\r\n");
                 }
             }
-
         } else {
             PRINTF("Soil wet enough. ADC=%u\r\n", soilVal);
 
-            /* close the servo once if it was open */
             if (currentlyOpen) {
                 if (xSemaphoreTake(g_waterGate, 0) == pdTRUE) {
                     Servo_SetPulse(SERVO_CLOSED_US);
@@ -353,61 +341,94 @@ static void SoilTask(void *arg)
     }
 }
 
-/* -------- Water Sensor (digital D0) -------- */
+/* -------- Water Sensor (digital D0) — INTERRUPT-DRIVEN -------- */
 static inline void WaterSensor_Init(void)
 {
-    /* Clock to PORTC already enabled by SoilMoisture_Init; ensure on */
+    /* Clock to PORTC */
     SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK;
 
-    /* PTC1 as GPIO input with pull-up */
+    /* PTC1 as GPIO input with pull-up + interrupt on both edges */
     WS_PORT->PCR[WS_PIN] =
         (WS_PORT->PCR[WS_PIN] & ~PORT_PCR_MUX_MASK)
-        | PORT_PCR_MUX(1)
-        | PORT_PCR_PE_MASK
-        | PORT_PCR_PS_MASK;
+        | PORT_PCR_MUX(1)           /* GPIO */
+        | PORT_PCR_PE_MASK          /* pull enable */
+        | PORT_PCR_PS_MASK          /* pull-up  */
+        | PORT_PCR_IRQC(0x0B);      /* interrupt on either edge */
 
     WS_GPIO->PDDR &= ~(1u << WS_PIN);
-}
 
-static inline bool WaterSensor_Wet(void)
-{
+    /* Clear stale flag */
+    PORTC->ISFR = (1u << WS_PIN);
+
+    /* Latch initial state */
     uint32_t raw = (WS_GPIO->PDIR >> WS_PIN) & 1u;
 #if WS_ACTIVE_HIGH
-    return raw ? true : false;   /* D0=1 => wet */
+    g_wsWet = raw ? true : false;
 #else
-    return raw ? false : true;   /* D0=0 => wet */
+    g_wsWet = raw ? false : true;
 #endif
+
+    /* NVIC for PORTC (some SDKs: PORTC_PORTD_IRQn, others: PORTC_IRQn) */
+    NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);  /* <— check IRQ name */
+    NVIC_SetPriority(PORTC_PORTD_IRQn, 3);   /* <— check IRQ name */
+    NVIC_EnableIRQ(PORTC_PORTD_IRQn);
 }
 
+/* GPIO combined IRQ for PORTC (adjust name if needed) */
+void PORTC_PORTD_IRQHandler(void)  /* <— rename if your BSP uses PORTC_IRQHandler */
+{
+    uint32_t flags = PORTC->ISFR;
+
+    if (flags & (1u << WS_PIN)) {
+        /* Clear the edge flag first */
+        PORTC->ISFR = (1u << WS_PIN);
+
+        /* Read level -> logical wet/dry */
+        uint32_t raw = (WS_GPIO->PDIR >> WS_PIN) & 1u;
+#if WS_ACTIVE_HIGH
+        g_wsWet = raw ? true : false;
+#else
+        g_wsWet = raw ? false : true;
+#endif
+
+        BaseType_t hpw = pdFALSE;
+        if (g_wsSem) {
+            xSemaphoreGiveFromISR(g_wsSem, &hpw);
+        }
+        portYIELD_FROM_ISR(hpw);
+    }
+}
+
+/* Water task now waits on ISR notifications instead of polling */
 static void WaterTask(void *arg)
 {
     (void)arg;
-    const TickType_t T = pdMS_TO_TICKS(200);
-    bool last = false;
 
-    /* Track if WaterTask currently holds the mutex (gate locked) */
     bool gateLockedByWater = false;
+    bool last = !g_wsWet;  /* force a print on first run */
 
     for (;;) {
-        bool wet = WaterSensor_Wet();
+        /* Block until ISR notifies a change (or initial kick) */
+        if (xSemaphoreTake(g_wsSem, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
 
+        bool wet = g_wsWet;
+
+        /* LED reflect state */
         if (wet)  led_on_red();
         else      led_off_red();
 
-        /* ---- Gate control ----
-           DRY  => lock the gate (take the mutex and keep it)
-           WET  => unlock the gate (give the mutex if we own it)
-        */
+        /* Gate control: DRY -> lock; WET -> unlock (if we own) */
         if (!wet) {
             if (!gateLockedByWater) {
                 if (xSemaphoreTake(g_waterGate, 0) == pdTRUE) {
-                    gateLockedByWater = true;   /* now blocked */
+                    gateLockedByWater = true;
                 }
-                /* If SoilTask momentarily holds it, we'll try again next loop */
             }
-        } else { /* wet */
+        } else {
             if (gateLockedByWater) {
-                xSemaphoreGive(g_waterGate);    /* reopen gate */
+                xSemaphoreGive(g_waterGate);
                 gateLockedByWater = false;
             }
         }
@@ -416,8 +437,6 @@ static void WaterTask(void *arg)
             PRINTF("Water sensor: %s\r\n", wet ? "WET" : "DRY");
             last = wet;
         }
-
-        vTaskDelay(T);
     }
 }
 
@@ -433,19 +452,28 @@ int main(void)
 
     gpio_init_leds();
     SoilMoisture_Init();
-    WaterSensor_Init();
     Servo_InitPWM();
 
     /* Create queue BEFORE enabling RX interrupt */
     g_rxQueue = xQueueCreate(8, sizeof(TMessage));
 
-    /* Create the water gate mutex: start UNLOCKED (servo allowed); WaterTask will lock when DRY */
+    /* Create the water gate mutex: start UNLOCKED (servo allowed) */
     g_waterGate = xSemaphoreCreateMutex();
     configASSERT(g_waterGate != NULL);
+
+    /* Binary semaphore for ISR -> WaterTask (NEW) */
+    g_wsSem = xSemaphoreCreateBinary();
+    configASSERT(g_wsSem != NULL);
 
     /* Init UART and enable RX interrupt now that queue exists */
     UART2_Init_115200();
     UART2->C2 |= UART_C2_RIE_MASK; /* enable RX interrupt */
+
+    /* Init water sensor (enables GPIO IRQs) */
+    WaterSensor_Init();
+
+    /* Kick WaterTask once with the latched initial state */
+    xSemaphoreGive(g_wsSem);
 
     xTaskCreate(RxTask,    "RxTask",    configMINIMAL_STACK_SIZE + 256, NULL, 2, NULL);
     xTaskCreate(TxTask,    "TxTask",    configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
