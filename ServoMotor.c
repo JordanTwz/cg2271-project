@@ -1,114 +1,164 @@
+/*
+ * FRDM-MCXC444 — FreeRTOS + Servo PWM on PTE22 (TPM2_CH0)
+ * Clock: MCGIRCLK 8 MHz -> TPM (TPMSRC=3), prescaler /128 => 62.5 kHz (16 µs ticks)
+ * PWM: 50 Hz (20 ms) => MOD = 20,000 µs / 16 µs - 1 = 1249 (edge-aligned)
+ *
+ * Wiring:
+ *   Servo signal -> PTE22
+ *   Servo GND    -> Board GND
+ *   Servo V+     -> (External 5 V recommended; share GND with board)
+ */
+
 #include <stdint.h>
+#include <stdbool.h>
+#include <stdio.h>
+
 #include "fsl_device_registers.h"
 #include "fsl_debug_console.h"
+#include "fsl_common.h"
 
-/* Servo Motor uses PORT E, PTE20 to PTE22 */
-#define SERVO_PORT         PORTE
-#define SERVO_GPIO_HIGH    20u /*PTE20*/
-#define SERVO_GPIO_LOW      21u /*PTE21*/
-#define SERVO_PWM_PIN       22u /*PTE22*/
-#define SERVO_PWM_PERIOD    20000u
-#define SERVO_CLOSED        1000u
-#define SERVO_OPENED        1250u
-#define WATERING_DURATION   3000000u
+#include "board.h"
+#include "peripherals.h"
+#include "pin_mux.h"
+#include "clock_config.h"
 
+/* FreeRTOS */
+#include "FreeRTOS.h"
+#include "task.h"
 
-/* ------------------------------ GPIO/Servo Motor -------------------------------- */
-void setMCGIRClk() {
-    // Choose MCG clock source of 01 for LIRC
-    // and set IRCLKEN to 1 to enable LIRC
-    MCG->C1 &= ~MCG_C1_CLKS_MASK;
-    MCG->C1 |= MCG_C2_IRCS_MASK;
+/* ---------------- Pin/Servo Config ---------------- */
+#define SERVO_PORT          PORTE
+#define SERVO_PWM_PIN       22u          /* PTE22 -> TPM2_CH0 ALT3 */
 
-    // Set IRCS to 1 to choose 8 MHz clock
-    MCG->C2 |= MCG_C2_IRCS_MASK;
+#define SERVO_PWM_PERIOD_US 20000u       /* 50 Hz period in microseconds */
+#define SERVO_CLOSED_US     1000u        /* ~1.0 ms pulse */
+#define SERVO_OPENED_US     1250u        /* ~1.25 ms pulse (tune as needed) */
 
-    // Choose FCRDIV of 0 for divisor of 1
-    MCG->SC &= ~MCG_SC_FCRDIV_MASK;
-    MCG->SC |= MCG_SC_FCRDIV(0b0);
+/* With 8 MHz / 128 = 62.5 kHz => 16 µs per TPM tick */
+#define TPM_TICK_US         16u
+#define TPM_MOD_EDGE        ((SERVO_PWM_PERIOD_US / TPM_TICK_US) - 1u)  /* 1249 */
 
-    // Choose LIRC_DIV2 of 0 for divisor of 1
-    MCG->MC &= ~MCG_MC_LIRC_DIV2_MASK;
-    MCG->MC |= MCG_MC_LIRC_DIV2(0b0);
+/* ---------------- MCGIRCLK @ 8 MHz ---------------- */
+static void SetMCGIRCLK_8MHz(void)
+{
+    /* Enable MCGIRCLK; select 8 MHz internal reference */
+    MCG->C1 |= MCG_C1_IRCLKEN_MASK;         /* enable MCGIRCLK output */
+    MCG->C2 |= MCG_C2_IRCS_MASK;            /* IRCS = 1 -> 8 MHz LIRC */
+    MCG->SC = (MCG->SC & ~MCG_SC_FCRDIV_MASK) | MCG_SC_FCRDIV(0);          /* /1 */
+    MCG->MC = (MCG->MC & ~MCG_MC_LIRC_DIV2_MASK) | MCG_MC_LIRC_DIV2(0);    /* /1 */
 }
 
-void setTPMClock() {
-    // Set MCGIRCLK
-    setMCGIRClk();
+/* ---------------- TPM2 @ 50 Hz, Edge-Aligned ---------------- */
+static void TPM2_Init_50Hz(void)
+{
+    /* Gate clocks */
+    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;     /* Port E for pin mux */
+    SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;      /* TPM2 module clock */
 
-    // Choose MCGIRCLK (8 MHz)
-    SIM->SOPT2 &= ~SIM_SOPT2_TPMSRC_MASK;
-    SIM->SOPT2 |= ~SIM_SOPT2_TPMSRC(0b11);
+    /* Route MCGIRCLK to TPM modules (TPMSRC=3) */
+    SetMCGIRCLK_8MHz();
+    SIM->SOPT2 = (SIM->SOPT2 & ~SIM_SOPT2_TPMSRC_MASK) | SIM_SOPT2_TPMSRC(3);
 
-    // Turn on clock gating to TPM2 (PTE22)
-    SIM->SCGC6 |= SIM_SCGC6_TPM2_MASK;
+    /* Pin mux: PTE22 -> ALT3 (TPM2_CH0) */
+    SERVO_PORT->PCR[SERVO_PWM_PIN] = (SERVO_PORT->PCR[SERVO_PWM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(3);
 
-    //Set up TPM2
-    //Turn off TPM2 and clear the prescalar field
-    TPM2->SC &= ~(TPM_SC_CMOD_MASK | TPM_SC_PS_MASK);
-    TPM2->SC |= TPM_SC_PS(0b111); // Prescalar of 128
-    TPM2->SC |= TPM_SC_CPWMS_MASK; // Centre-aligned PWM mode
+    /* Stop TPM2; set prescaler /128; edge-aligned (CPWMS=0) */
+    TPM2->SC = 0;
+    TPM2->SC = TPM_SC_PS(7);                 /* PS=111 -> /128 */
+    TPM2->CONF = 0;                          /* default */
 
-    
-    TPM2->CNT = 0; // Initialize count to 0
-    TPM2->MOD = 63; // Mod value for PWM frequency of 50Hz
+    /* Set period for 50 Hz */
+    TPM2->MOD = TPM_MOD_EDGE;               /* 1249 for 20 ms */
+
+    /* Channel 0: High-true edge-aligned PWM (MSB:MSA=10, ELSB:ELSA=10) */
+    TPM2->CONTROLS[0].CnSC = TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK;
+
+    /* Start TPM2 with internal clock */
+    TPM2->CNT = 0;
+    TPM2->SC |= TPM_SC_CMOD(1);             /* CMOD=01 -> internal clock */
 }
 
-void PWM_Init_Servo(void) {
-    // Configure PWM timer for 50Hz output to servo pin
-    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
-
-    PORTE->PCR[SERVO_PWM_PIN] &= ~PORT_PCR_MUX_MASK;
-    PORTE->PCR[SERVO_PWM_PIN] |= PORT_PCR_MUX(0b11);  // ALT3 = TPM2_CH0
-
-
-    // Do not set GPIO direction for TPM driven pin (TPM overrides)
-    // Initialize TPM2 clock, MOD and prescaler
-    setTPMClock();
-
-    // Configure TPM2 channel 0 for high-true PWM: MSB:MSA = 10, ELSB:ELSA = 10 (clear on match, set at 0)
-    TPM2->CONTROLS[0].CnSC &= ~(TPM_CnSC_MSA_MASK | TPM_CnSC_ELSA_MASK);
-    TPM2->CONTROLS[0].CnSC = (TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK);
-
-    // Start TPM2 counter (use CMOD = 01 to select internal clock)
-    TPM2->SC = (TPM2->SC & ~TPM_SC_CMOD_MASK) | TPM_SC_CMOD(1);
+/* Convert microseconds to TPM ticks and set duty */
+static inline void Servo_SetPulse_us(uint16_t pulse_us)
+{
+    /* Saturate to [0, MOD] just in case */
+    uint32_t ticks = pulse_us / TPM_TICK_US;    /* 1,000 us -> ~62; 2,000 us -> ~125 */
+    if (ticks > TPM_MOD_EDGE) ticks = TPM_MOD_EDGE;
+    TPM2->CONTROLS[0].CnV = (uint16_t)ticks;
 }
 
-void Set_Servo_Pulse(uint16_t pulse_us) {
-    TPM2->CONTROLS[0].CnV = (pulse_us * 63) / SERVO_PWM_PERIOD;
-}
+/* ---------------- FreeRTOS Task ---------------- */
+static void ServoTask(void *pvParameters)
+{
+    (void)pvParameters;
 
-void start_ServoMotor(void) {
-    PWM_Init_Servo();
-    PRINTF("Servo motor PWM initialized (PTE22 -> TPM2_CH0)\r\n");
-    TPM2->SC |= TPM_SC_CMOD(0b01); // Start TPM2
-}
+    PRINTF("ServoTask: starting. 50 Hz PWM on PTE22 (TPM2_CH0)\r\n");
 
-// Servo motor control task to water the plant
-int main() {
+    /* Start at CLOSED, then alternate OPEN/CLOSE every 3 s */
+    bool opened = false;
 
-    start_ServoMotor();
-    
-    while (1) {
-        Set_Servo_Pulse(SERVO_OPENED);
-    	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
+    for (;;)
+    {
+        if (opened) {
+            Servo_SetPulse_us(SERVO_CLOSED_US);
+            PRINTF("Servo -> CLOSED (%u us)\r\n", SERVO_CLOSED_US);
+        } else {
+            Servo_SetPulse_us(SERVO_OPENED_US);
+            PRINTF("Servo -> OPENED (%u us)\r\n", SERVO_OPENED_US);
+        }
+        opened = !opened;
 
-    	Set_Servo_Pulse(SERVO_CLOSED);
-    	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
-
-        PRINTF("Servo task running...\r\n");
-        vTaskDelay(pdMS_TO_TICKS(250)); // 250ms delay       
+        vTaskDelay(pdMS_TO_TICKS(3000)); /* 3 s */
     }
 }
 
+/* ---------------- Hooks (optional but helpful) ---------------- */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask; (void)pcTaskName;
+    PRINTF("Stack overflow in task: %s\r\n", pcTaskName);
+    __BKPT(0);
+    for(;;);
+}
 
-// Update servo semaphore based on water sensor reading
-// void Update_Servo_Semaphore(void) {
-//     if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
-//         servo_semaphore = 1;  // Water present → allow "watering" task
-//     } else {
-//         servo_semaphore = 0;  // No water → block "watering" task
-//     }
+void vApplicationMallocFailedHook(void)
+{
+    PRINTF("Malloc failed!\r\n");
+    __BKPT(0);
+    for(;;);
+}
 
-// }
+/* ---------------- main ---------------- */
+int main(void)
+{
+    /* SDK init (pins, clocks, console) — keep these in this order */
+    BOARD_InitBootPins();
+    BOARD_InitBootClocks();
+    BOARD_InitDebugConsole();
 
+    PRINTF("\r\n=== FRDM-MCXC444 Servo PWM + FreeRTOS Demo ===\r\n");
+
+    /* Init PWM hardware */
+    TPM2_Init_50Hz();
+
+    /* Create the servo task */
+    BaseType_t ok = xTaskCreate(
+        ServoTask,
+        "ServoTask",
+        512,            /* stack words (adjust if needed) */
+        NULL,
+        tskIDLE_PRIORITY + 2,
+        NULL
+    );
+    if (ok != pdPASS) {
+        PRINTF("Failed to create ServoTask\r\n");
+        for(;;);
+    }
+
+    /* Start the scheduler (never returns) */
+    vTaskStartScheduler();
+
+    /* If we ever get here, RTOS failed to start */
+    PRINTF("Scheduler failed to start\r\n");
+    for(;;);
+}
