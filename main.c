@@ -37,6 +37,9 @@ void gpio_init_led(void);
 void SoilMoisture_Init(void);
 void SoilMoisture_Measure(void);
 
+void init_watersensor(void);
+void PORTC_PORTD_IRQHandler(void);
+
 /* -------------------------------- main ---------------------------------- */
 int main(void)
 {
@@ -51,6 +54,7 @@ int main(void)
     gpio_init_led();
     PRINTF("Soil Moisture Sensor\r\n");
     SoilMoisture_Init();
+    init_watersensor();
 
     while (1) {
         SoilMoisture_Measure();
