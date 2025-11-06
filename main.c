@@ -32,6 +32,8 @@
 #include "semphr.h"
 
 /* --- Declarations for implemented functions --- */
+void gpio_init_led(void);
+
 void SoilMoisture_Init(void);
 void SoilMoisture_Measure(void);
 
@@ -46,6 +48,7 @@ int main(void)
     BOARD_InitDebugConsole();
 #endif
 
+    gpio_init_led();
     PRINTF("Soil Moisture Sensor\r\n");
     SoilMoisture_Init();
 

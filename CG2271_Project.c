@@ -86,6 +86,7 @@
 static volatile uint16_t g_ldr_raw = 0;    /* latest ADC reading */
 static volatile uint16_t g_soil_raw = 0;   /* latest ADC reading for soil sensor */
 // static volatile uint8_t servo_semaphore = 1;  /* semaphore for "watering" task */
+SemaphoreHandle_t servo_semaphore;
 bool ledOn = false;
 
 /* ------------------------------ UART -------------------------------- */
@@ -299,9 +300,9 @@ void PORTC_PORTD_IRQHandler() {
     NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
     
     if (PORTC->ISFR & (1 << WATERSENSORSIGNAL)) { 
-        // BaseType_t hpw = pdFALSE;
-        // xSemaphoreGiveFromISR(servo_semaphore, &hpw);
-        // portYIELD_FROM_ISR(hpw);
+        BaseType_t hpw = pdFALSE;
+        xSemaphoreGiveFromISR(servo_semaphore, &hpw);
+        portYIELD_FROM_ISR(hpw);
 
         // clear interrupt flag
         PORTC->ISFR |= (1<< WATERSENSORSIGNAL);
@@ -470,13 +471,13 @@ void PWM_Init_Servo(void) {
 
 
 // Update servo semaphore based on water sensor reading
-// void Update_Servo_Semaphore(void) {
-//     if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
-//         servo_semaphore = 1;  // Water present → allow "watering" task
-//     } else {
-//         servo_semaphore = 0;  // No water → block "watering" task
-//     }
-// }
+void Update_Servo_Semaphore(void) {
+    if (GPIOC->PDIR & (1 << WATERSENSORSIGNAL)) {
+        servo_semaphore = 1;  // Water present → allow "watering" task
+    } else {
+        servo_semaphore = 0;  // No water → block "watering" task
+    }
+}
 
 /* -------------------------------- main ---------------------------------- */
 int main(void)
@@ -509,7 +510,7 @@ int main(void)
 	queue = xQueueCreate(QLEN, sizeof(TMessage));
     
     // create semaphore for servo task
-    SemaphoreHandle_t servo_semaphore = xSemaphoreCreateBinary();
+    servo_semaphore = xSemaphoreCreateBinary();
     configASSERT(servo_semaphore != NULL);
     xSemaphoreGive(servo_semaphore); //set to 1
 
