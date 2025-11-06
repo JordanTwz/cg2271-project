@@ -39,6 +39,14 @@
 #define REDLED_PIN        6u       /* PTD6 */
 #define GREENLED_PIN      7u       /* PTD7 */
 
+/* ---------------- Soil Moisture config ---------------- */
+/* Soil Moisture sensor on PTE23 -> ADC0_SE4a (ALT0) */
+#define SM_PORT         PORTE
+#define SM_PIN          23u
+#define SM_ADC_CH       4u       /* ADC0_SE4a */
+#define SOIL_DRY_THRESH 2000u
+//#define SOIL_WET_THRESH 1200u
+
 /* ---------------- Messaging ------------------ */
 #define MAX_MSG_LEN       256
 typedef struct {
@@ -208,6 +216,53 @@ static void TxTask(void *arg)
     }
 }
 
+/*Soil Moisture Functions*/
+static uint16_t adc0_read_poll(uint8_t ch)
+{
+    ADC0->SC1[0] = ADC_SC1_DIFF(0) | ADC_SC1_ADCH(ch);
+    while (!(ADC0->SC1[0] & ADC_SC1_COCO_MASK)) {
+        /* wait until conversion complete */
+    }
+    return ADC0->R[0];
+}
+
+void SoilMoisture_Init(void)
+{
+    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+
+    SM_PORT->PCR[SM_PIN] =
+        (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
+
+    SIM->SCGC6 |= SIM_SCGC6_ADC0_MASK;
+
+    ADC0->CFG1 = (ADC0->CFG1 & ~ADC_CFG1_MODE_MASK) | ADC_CFG1_MODE(1);
+    ADC0->SC2 = (ADC0->SC2 & ~(ADC_SC2_ADTRG_MASK | ADC_SC2_REFSEL_MASK))
+              | ADC_SC2_REFSEL(1);
+    ADC0->SC3 = 0;
+
+    PRINTF("Soil moisture ADC initialized (PTE23 -> ADC0_SE4a)\r\n");
+}
+
+void SoilMoisture_Measure(void)
+{
+    uint16_t soilVal = adc0_read_poll(SM_ADC_CH);
+
+    if (soilVal > SOIL_DRY_THRESH) {
+        PRINTF("Soil dry! ADC=%u → Water needed.\r\n", soilVal);
+    } else {
+        PRINTF("Soil wet enough. ADC=%u\r\n", soilVal);
+    }
+}
+
+static void SoilTask(void *arg) {
+	(void)arg;
+	const TickType_t T = pdMS_TO_TICKS(1000);
+	while(1) {
+		SoilMoisture_Measure();
+		vTaskDelay(T);
+	}
+}
+
 /* ================== Main ===================== */
 int main(void)
 {
@@ -219,6 +274,7 @@ int main(void)
 #endif
 
     gpio_init_leds();
+    SoilMoisture_Init();
 
     /* Create queue BEFORE enabling RX interrupt */
     g_rxQueue = xQueueCreate(8, sizeof(TMessage));
@@ -229,6 +285,7 @@ int main(void)
 
     xTaskCreate(RxTask, "RxTask", configMINIMAL_STACK_SIZE + 256, NULL, 2, NULL);
     xTaskCreate(TxTask, "TxTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
+    xTaskCreate(SoilTask, "SoilTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
 
     vTaskStartScheduler();
 
