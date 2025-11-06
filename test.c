@@ -47,6 +47,10 @@
 #define SOIL_DRY_THRESH 2300u
 //#define SOIL_WET_THRESH 1200u
 
+/* ---------------- water sensor config ---------------- */
+#define WATERSENSORSIGNAL 4
+static SemaphoreHandle_t g_waterSem = NULL;
+
 /* ---------------- Messaging ------------------ */
 #define MAX_MSG_LEN       256
 typedef struct {
@@ -78,6 +82,66 @@ static void gpio_init_leds(void)
     /* Ensure both LEDs are OFF (active-low => drive HIGH) */
     led_off_red();
     led_off_green();
+}
+
+static void init_watersensor() {
+    NVIC_DisableIRQ(PORTC_PORTD_IRQn);
+
+	//activate PORTC
+	SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK;
+
+	//configure as GPIO for all pins
+	PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_MUX_MASK;
+	PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_MUX(1);
+
+	//configure signal to input, VCC and GND to output
+	GPIOC->PDDR &= ~(1 << WATERSENSORSIGNAL);
+
+    // configure IRQ type to trigger on falling edge
+    PORTC->PCR[WATERSENSORSIGNAL] &= ~PORT_PCR_IRQC_MASK;
+    PORTC->PCR[WATERSENSORSIGNAL] |= PORT_PCR_IRQC(0b1010);  // falling edge
+
+    PORTC->ISFR |= (1<< WATERSENSORSIGNAL); // clear any pending interrupt
+
+    NVIC_SetPriority(PORTC_PORTD_IRQn, 64);
+    NVIC_ClearPendingIRQ(PORTC_PORTD_IRQn);
+    NVIC_EnableIRQ(PORTC_PORTD_IRQn);
+}
+
+// Interrupt handler for PORTC
+void PORTC_PORTD_IRQHandler(void) {
+    if (PORTC->ISFR & (1u << WATERSENSORSIGNAL)) {
+        /* Clear flag first */
+        PORTC->ISFR = (1u << WATERSENSORSIGNAL);
+
+        /* Wake the water task */
+        BaseType_t hpw = pdFALSE;
+        if (g_waterSem) {
+            xSemaphoreGiveFromISR(g_waterSem, &hpw);
+        }
+        portYIELD_FROM_ISR(hpw);
+    }
+}
+
+static void WaterTask(void *arg) {
+    (void)arg;
+    for (;;) {
+        /* Block until the ISR signals us */
+        if (xSemaphoreTake(g_waterSem, portMAX_DELAY) == pdTRUE) {
+            /* Read current pin level to decide state */
+            bool level_high = (GPIOC->PDIR & (1u << WATERSENSORSIGNAL)) != 0;
+
+            /* Your comment says falling-edge = "no water detected".
+               So assume LOW = no water → turn RED ON; HIGH = ok → RED OFF */
+            if (!level_high) {
+                led_on_red();
+                PRINTF("Water level LOW → refill needed.\r\n");
+            } else {
+                led_off_red();
+                PRINTF("Water level OK.\r\n");
+            }
+        }
+    }
 }
 
 /* ============== UART low-level =============== */
@@ -277,8 +341,10 @@ int main(void)
     BOARD_InitDebugConsole();
 #endif
 
+	g_waterSem = xSemaphoreCreateBinary();
     gpio_init_leds();
     SoilMoisture_Init();
+	init_watersensor();
 
     /* Create queue BEFORE enabling RX interrupt */
     g_rxQueue = xQueueCreate(8, sizeof(TMessage));
@@ -290,6 +356,7 @@ int main(void)
     xTaskCreate(RxTask, "RxTask", configMINIMAL_STACK_SIZE + 256, NULL, 2, NULL);
     xTaskCreate(TxTask, "TxTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
     xTaskCreate(SoilTask, "SoilTask", configMINIMAL_STACK_SIZE + 256, NULL, 1, NULL);
+	xTaskCreate(WaterTask, "WaterTask", configMINIMAL_STACK_SIZE + 256, NULL, 3, NULL);
 
     vTaskStartScheduler();
 
