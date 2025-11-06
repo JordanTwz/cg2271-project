@@ -41,10 +41,10 @@
 
 /* ---------------- Soil Moisture config ---------------- */
 /* Soil Moisture sensor on PTE23 -> ADC0_SE4a (ALT0) */
-#define SM_PORT         PORTE
-#define SM_PIN          23u
-#define SM_ADC_CH       4u       /* ADC0_SE4a */
-#define SOIL_DRY_THRESH 2000u
+#define SM_PORT         PORTC
+#define SM_PIN          0u
+#define SM_ADC_CH       8u    
+#define SOIL_DRY_THRESH 2300u
 //#define SOIL_WET_THRESH 1200u
 
 /* ---------------- Messaging ------------------ */
@@ -219,28 +219,32 @@ static void TxTask(void *arg)
 /*Soil Moisture Functions*/
 static uint16_t adc0_read_poll(uint8_t ch)
 {
-    ADC0->SC1[0] = ADC_SC1_DIFF(0) | ADC_SC1_ADCH(ch);
-    while (!(ADC0->SC1[0] & ADC_SC1_COCO_MASK)) {
-        /* wait until conversion complete */
-    }
+    ADC0->SC1[0] = ADC_SC1_ADCH(SM_ADC_CH); 
+    while (!(ADC0->SC1[0] & ADC_SC1_COCO_MASK)); 
     return ADC0->R[0];
 }
 
 void SoilMoisture_Init(void)
 {
-    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+    SIM->SCGC5 |= SIM_SCGC5_PORTC_MASK; 
+    SIM->SCGC6 |= SIM_SCGC6_ADC0_MASK;  
 
     SM_PORT->PCR[SM_PIN] =
         (SM_PORT->PCR[SM_PIN] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(0);
 
-    SIM->SCGC6 |= SIM_SCGC6_ADC0_MASK;
+    ADC0->SC1[0] = ADC_SC1_ADCH(31);
 
-    ADC0->CFG1 = (ADC0->CFG1 & ~ADC_CFG1_MODE_MASK) | ADC_CFG1_MODE(1);
-    ADC0->SC2 = (ADC0->SC2 & ~(ADC_SC2_ADTRG_MASK | ADC_SC2_REFSEL_MASK))
-              | ADC_SC2_REFSEL(1);
+    ADC0->CFG1 =
+        ADC_CFG1_MODE(1)       
+        | ADC_CFG1_ADIV(0)      
+        | ADC_CFG1_ADICLK(0);  
+
+    ADC0->SC2 =
+        ADC_SC2_REFSEL(1);
+
     ADC0->SC3 = 0;
 
-    PRINTF("Soil moisture ADC initialized (PTE23 -> ADC0_SE4a)\r\n");
+    PRINTF("Soil Moisture ADC initialized (PTC0 -> ADC0_SE8, polling mode)\r\n");
 }
 
 void SoilMoisture_Measure(void)
@@ -248,7 +252,7 @@ void SoilMoisture_Measure(void)
     uint16_t soilVal = adc0_read_poll(SM_ADC_CH);
 
     if (soilVal > SOIL_DRY_THRESH) {
-        PRINTF("Soil dry! ADC=%u → Water needed.\r\n", soilVal);
+        PRINTF("Soil dry! ADC=%u. Water needed.\r\n", soilVal);
     } else {
         PRINTF("Soil wet enough. ADC=%u\r\n", soilVal);
     }
