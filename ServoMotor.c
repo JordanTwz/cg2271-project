@@ -85,9 +85,11 @@ void start_ServoMotor(void) {
 }
 
 // Servo motor control task to water the plant
-static void Servo_task(void *p) {
+int void main(void) {
+
+    start_ServoMotor();
+    
     while (1) {
-        start_ServoMotor();
         Set_Servo_Pulse(SERVO_OPENED);
     	vTaskDelay(pdMS_TO_TICKS(3000)); // 3s delay
 
@@ -107,4 +109,5 @@ static void Servo_task(void *p) {
 //     } else {
 //         servo_semaphore = 0;  // No water → block "watering" task
 //     }
+
 // }
