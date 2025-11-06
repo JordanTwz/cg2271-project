@@ -73,6 +73,9 @@ typedef struct {
 static QueueHandle_t g_rxQueue;
 static char g_txBuffer[MAX_MSG_LEN];
 
+/* -------- Gate: allow servo moves only when water is WET -------- */
+static SemaphoreHandle_t g_waterGate = NULL;  /* mutex unlocked => allowed; locked => blocked */
+
 /* initialize TPM2 for 50Hz PWM on PTE22  */
 static void Servo_InitPWM(void)
 {
@@ -91,7 +94,7 @@ static void Servo_InitPWM(void)
     TPM2->SC = TPM_SC_PS(7);               /* prescale /128 */
     TPM2->MOD = SERVO_MOD_VAL;             /* 20ms period   */
     TPM2->CONTROLS[0].CnSC =
-        TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK;   /* edge‑aligned, high‑true */
+        TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK;   /* edge-aligned, high-true */
     TPM2->SC |= TPM_SC_CMOD(1);            /* start counter */
 
     PRINTF("Servo PWM initialized on PTE22 (TPM2_CH0)\r\n");
@@ -311,7 +314,7 @@ void SoilMoisture_Measure(void)
 static void SoilTask(void *arg)
 {
     (void)arg;
-    const TickType_t T = pdMS_TO_TICKS(1000);
+    const TickType_t T = pdMS_TO_TICKS(1000); /* (keep original spacing; this line was untouched) */
     bool currentlyOpen = false;
 
     for (;;) {
@@ -322,8 +325,13 @@ static void SoilTask(void *arg)
 
             /* open the servo once if not already open */
             if (!currentlyOpen) {
-                Servo_SetPulse(SERVO_OPEN_US);
-                currentlyOpen = true;
+                if (xSemaphoreTake(g_waterGate, 0) == pdTRUE) {
+                    Servo_SetPulse(SERVO_OPEN_US);
+                    xSemaphoreGive(g_waterGate);
+                    currentlyOpen = true;
+                } else {
+                    PRINTF("Water DRY: servo OPEN blocked\r\n");
+                }
             }
 
         } else {
@@ -331,8 +339,13 @@ static void SoilTask(void *arg)
 
             /* close the servo once if it was open */
             if (currentlyOpen) {
-                Servo_SetPulse(SERVO_CLOSED_US);
-                currentlyOpen = false;
+                if (xSemaphoreTake(g_waterGate, 0) == pdTRUE) {
+                    Servo_SetPulse(SERVO_CLOSED_US);
+                    xSemaphoreGive(g_waterGate);
+                    currentlyOpen = false;
+                } else {
+                    PRINTF("Water DRY: servo CLOSE blocked\r\n");
+                }
             }
         }
 
@@ -372,17 +385,35 @@ static void WaterTask(void *arg)
     const TickType_t T = pdMS_TO_TICKS(200);
     bool last = false;
 
+    /* Track if WaterTask currently holds the mutex (gate locked) */
+    bool gateLockedByWater = false;
+
     for (;;) {
         bool wet = WaterSensor_Wet();
 
         if (wet)  led_on_red();
         else      led_off_red();
 
+        /* ---- Gate control ----
+           DRY  => lock the gate (take the mutex and keep it)
+           WET  => unlock the gate (give the mutex if we own it)
+        */
+        if (!wet) {
+            if (!gateLockedByWater) {
+                if (xSemaphoreTake(g_waterGate, 0) == pdTRUE) {
+                    gateLockedByWater = true;   /* now blocked */
+                }
+                /* If SoilTask momentarily holds it, we'll try again next loop */
+            }
+        } else { /* wet */
+            if (gateLockedByWater) {
+                xSemaphoreGive(g_waterGate);    /* reopen gate */
+                gateLockedByWater = false;
+            }
+        }
+
         if (wet != last) {
             PRINTF("Water sensor: %s\r\n", wet ? "WET" : "DRY");
-            /* Optionally broadcast over UART as well:
-             * UART2_SendLine(wet ? "WATER=1\n" : "WATER=0\n");
-             */
             last = wet;
         }
 
@@ -407,6 +438,10 @@ int main(void)
 
     /* Create queue BEFORE enabling RX interrupt */
     g_rxQueue = xQueueCreate(8, sizeof(TMessage));
+
+    /* Create the water gate mutex: start UNLOCKED (servo allowed); WaterTask will lock when DRY */
+    g_waterGate = xSemaphoreCreateMutex();
+    configASSERT(g_waterGate != NULL);
 
     /* Init UART and enable RX interrupt now that queue exists */
     UART2_Init_115200();
