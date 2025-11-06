@@ -7,6 +7,11 @@
 #include "fsl_debug_console.h"
 #include "fsl_device_registers.h"
 
+/* Water Sensor uses PORT C*/
+#define WATERSENSORSIGNAL 0
+#define WATERSENSORVCC 4
+#define WATERSENSORGND 6
+
 // Initialize water sensor pins and interrupt
 static void init_watersensor() {
     NVIC_DisableIRQ(PORTC_PORTD_IRQn);
