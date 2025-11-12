@@ -44,7 +44,7 @@
 #define SM_PORT           PORTC
 #define SM_PIN            0u
 #define SM_ADC_CH         4u              /* keep as-is per your code path */
-#define SOIL_DRY_THRESH   2300u
+#define SOIL_DRY_THRESH   1800u
 /* #define SOIL_WET_THRESH 1200u */
 
 /* ---------------- Water sensor (digital D0) -- */
